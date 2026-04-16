@@ -123,6 +123,7 @@ class IOHProblemAdapter:
         self.lower, self.upper = _problem_bounds(problem, self.dim)
         self.bounds = _BoundsView(self.lower, self.upper)
         self.evaluations = 0
+        self.best_values: list[float] = []
 
     def __call__(self, x):
         if self.evaluations >= self.budget:
@@ -142,10 +143,16 @@ class IOHProblemAdapter:
             raise ValueError(f"Expected scalar objective value, got shape {y_arr.shape}")
 
         self.evaluations += 1
-        return float(y_arr.item())
+        value = float(y_arr.item())
+        if self.best_values:
+            self.best_values.append(min(self.best_values[-1], value))
+        else:
+            self.best_values.append(value)
+        return value
 
     def reset(self):
         self.evaluations = 0
+        self.best_values.clear()
         return self._problem.reset()
 
     def __getattr__(self, name: str):
@@ -229,8 +236,6 @@ def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budg
         problem = _load_ioh_problem(fid)
         scaled_budget = max(1, int(GNBG_BASE_BUDGET * budget_scale))
         wrapped_problem = IOHProblemAdapter(problem, scaled_budget)
-        log = AOCLogger()
-        problem.attach_logger(log)
 
         algorithm = algorithm_cls(budget=scaled_budget, dim=wrapped_problem.dim)
 
@@ -242,6 +247,8 @@ def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budg
             pass
         elapsed_s = time.perf_counter() - t0
 
+        log = AOCLogger()
+        log.best_values = list(wrapped_problem.best_values)
         auc = float(correct_aoc(problem, log, scaled_budget))
         log.reset(problem)
         problem.reset()
