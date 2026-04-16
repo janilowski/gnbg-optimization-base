@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gnbg-codex-simple"
+version = "0.1.0"
+description = "Minimal GNBG + IOH harness for Codex-generated algorithms"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0",
+  "ioh>=0.3.18",
+  "iohgnbg",
+]
