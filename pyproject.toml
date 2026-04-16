@@ -1,6 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-requires-python = ">=3.11,<3.13"
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,9 +7,12 @@ name = "gnbg-optimization-base"
 version = "0.1.0"
 description = "Minimal GNBG + IOH harness for agent-generated algorithms"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "numpy>=2.0",
   "ioh>=0.3.18",
   "iohgnbg",
 ]
+
+[tool.setuptools]
+py-modules = ["gnbg_harness", "candidate", "run_candidate"]
