@@ -12,7 +12,7 @@ Process:
 1. Read `AGENTS.md` and `candidate.py`.
 2. Implement one meaningful improvement.
 3. Run `python run_candidate.py --profile quick`.
-4. If the quick run passes, run `python run_candidate.py --profile search`.
+4. If the quick run passes, run `python3 run_candidate.py --profile search`.
 5. Stop after logging results.
 
 In your final message, include:
