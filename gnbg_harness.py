@@ -11,7 +11,7 @@ import numpy as np
 from ioh import logger
 
 GNBG_INSTANCES_FOLDER = "benchmarks/gnbg/official"
-GNBG_BASE_BUDGET = 2000
+GNBG_BASE_BUDGET = 20000
 
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
@@ -26,17 +26,17 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
         "budget_scale": 0.2,
         "parallel_workers": 8,
     },
-    "selection": {
-        "problem_ids": list(range(1, 25)),
+    "hard": {
+        "problem_ids": [9, 13, 3, 10, 14],
         "reps": 5,
-        "budget_scale": 0.3,
+        "budget_scale": 10.0,
         "parallel_workers": 8,
     },
     "timing": {
         "problem_ids": list(range(1, 25)),
         "reps": 3,
-        "budget_scale": 1.0,
-        "parallel_workers": 1,
+        "budget_scale": 10.0,
+        "parallel_workers": 8,
     },
     "final": {
         "problem_ids": list(range(1, 25)),

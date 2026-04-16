@@ -16,8 +16,8 @@ Rules:
 - Do not add heavy dependencies.
 
 Validation commands:
-- `python3 run_candidate.py --profile quick`
-- if that works, optionally `python3 run_candidate.py --profile search`
+- `uv run python3 run_candidate.py --profile quick`
+- if that works, run `uv run python3 run_candidate.py --profile hard`
 
 What to optimize for:
 - First: correctness and budget safety.
