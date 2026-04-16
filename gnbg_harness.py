@@ -21,10 +21,16 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
         "parallel_workers": 1,
     },
     "search": {
-        "problem_ids": list(range(1, 10)),
-        "reps": 1,
-        "budget_scale": 0.1,
-        "parallel_workers": 6,
+        "problem_ids": list(range(1, 25)),
+        "reps": 3,
+        "budget_scale": 0.2,
+        "parallel_workers": 8,
+    },
+    "selection": {
+        "problem_ids": list(range(1, 25)),
+        "reps": 5,
+        "budget_scale": 0.3,
+        "parallel_workers": 8,
     },
     "timing": {
         "problem_ids": list(range(1, 25)),
@@ -56,8 +62,13 @@ class CaseResult:
     ok: bool
     fid: int
     rep: int
+    seed: int | None = None
     score: float | None = None
     auc: float | None = None
+    anchor_random_score: float | None = None
+    anchor_local_score: float | None = None
+    delta_vs_random: float | None = None
+    delta_vs_local: float | None = None
     elapsed_s: float | None = None
     budget: int | None = None
     dim: int | None = None
@@ -218,8 +229,62 @@ def _problem_bounds(problem, dim: int) -> tuple[np.ndarray, np.ndarray]:
     return lower, upper
 
 
-def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budget_scale: float):
-    np.random.seed(rep)
+def _derive_seed(seed_base: int, fid: int, rep: int) -> int:
+    return int(seed_base + fid * 10007 + rep)
+
+
+def _run_random_baseline(problem, budget: int, seed: int) -> list[float]:
+    dim = _problem_dim(problem)
+    lower, upper = _problem_bounds(problem, dim)
+    rng = np.random.default_rng(seed)
+    best_values: list[float] = []
+    best_y = float("inf")
+    for _ in range(int(budget)):
+        x = rng.uniform(lower, upper, size=dim)
+        y = float(np.asarray(problem(x)).item())
+        best_y = min(best_y, y)
+        best_values.append(best_y)
+    return best_values
+
+
+def _run_local_baseline(problem, budget: int, seed: int) -> list[float]:
+    dim = _problem_dim(problem)
+    lower, upper = _problem_bounds(problem, dim)
+    span = np.maximum(1e-12, upper - lower)
+    sigma = 0.15 * span
+    rng = np.random.default_rng(seed + 1)
+
+    x = rng.uniform(lower, upper, size=dim)
+    best_y = float(np.asarray(problem(x)).item())
+    best_values: list[float] = [best_y]
+
+    remaining = int(budget) - 1
+    while remaining > 0:
+        z = x + rng.normal(0.0, sigma, size=dim)
+        z = np.clip(z, lower, upper)
+        y = float(np.asarray(problem(z)).item())
+        if y < best_y:
+            x = z
+            best_y = y
+            sigma = np.minimum(0.5 * span, sigma * 1.03)
+        else:
+            sigma = np.maximum(1e-12, sigma * 0.99)
+        best_values.append(best_y)
+        remaining -= 1
+    return best_values
+
+
+def _run_single_case(
+    module_name: str,
+    class_name: str,
+    fid: int,
+    rep: int,
+    budget_scale: float,
+    seed_base: int,
+    with_anchors: bool,
+):
+    seed = _derive_seed(seed_base, fid, rep)
+    np.random.seed(seed)
 
     try:
         module = __import__(module_name, fromlist=[class_name])
@@ -229,6 +294,7 @@ def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budg
             ok=False,
             fid=fid,
             rep=rep,
+            seed=seed,
             error=f"Could not import {module_name}.{class_name}: {type(exc).__name__}: {exc}",
         )
 
@@ -253,12 +319,34 @@ def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budg
         log.reset(problem)
         problem.reset()
 
+        anchor_random_score = None
+        anchor_local_score = None
+        if with_anchors:
+            random_trace = _run_random_baseline(problem, scaled_budget, seed)
+            random_log = AOCLogger()
+            random_log.best_values = random_trace
+            anchor_random_score = float(correct_aoc(problem, random_log, scaled_budget))
+            random_log.reset(problem)
+            problem.reset()
+
+            local_trace = _run_local_baseline(problem, scaled_budget, seed)
+            local_log = AOCLogger()
+            local_log.best_values = local_trace
+            anchor_local_score = float(correct_aoc(problem, local_log, scaled_budget))
+            local_log.reset(problem)
+            problem.reset()
+
         return CaseResult(
             ok=True,
             fid=fid,
             rep=rep,
+            seed=seed,
             score=auc,
             auc=auc,
+            anchor_random_score=anchor_random_score,
+            anchor_local_score=anchor_local_score,
+            delta_vs_random=(auc - anchor_random_score) if anchor_random_score is not None else None,
+            delta_vs_local=(auc - anchor_local_score) if anchor_local_score is not None else None,
             elapsed_s=elapsed_s,
             budget=scaled_budget,
             dim=wrapped_problem.dim,
@@ -269,6 +357,7 @@ def _run_single_case(module_name: str, class_name: str, fid: int, rep: int, budg
             ok=False,
             fid=fid,
             rep=rep,
+            seed=seed,
             error=f"Runtime error on IOH GNBG f{fid}, rep {rep}: {type(exc).__name__}: {exc}",
         )
 
@@ -279,25 +368,47 @@ def evaluate_candidate(
     profile: str = "quick",
     workers: int | None = None,
     budget_scale: float | None = None,
+    reps: int | None = None,
+    seed_base: int = 12345,
+    with_anchors: bool = True,
 ) -> dict[str, Any]:
     preset = PROFILE_PRESETS[profile].copy()
     if workers is not None:
         preset["parallel_workers"] = max(1, int(workers))
     if budget_scale is not None:
         preset["budget_scale"] = float(budget_scale)
+    if reps is not None:
+        preset["reps"] = max(1, int(reps))
 
     cases = [(fid, rep) for fid in preset["problem_ids"] for rep in range(preset["reps"])]
 
     if preset["parallel_workers"] <= 1 or len(cases) <= 1:
         results = [
-            _run_single_case(module_name, class_name, fid, rep, preset["budget_scale"])
+            _run_single_case(
+                module_name,
+                class_name,
+                fid,
+                rep,
+                preset["budget_scale"],
+                seed_base,
+                with_anchors,
+            )
             for fid, rep in cases
         ]
     else:
         results = []
         with ProcessPoolExecutor(max_workers=preset["parallel_workers"]) as executor:
             future_map = {
-                executor.submit(_run_single_case, module_name, class_name, fid, rep, preset["budget_scale"]): (fid, rep)
+                executor.submit(
+                    _run_single_case,
+                    module_name,
+                    class_name,
+                    fid,
+                    rep,
+                    preset["budget_scale"],
+                    seed_base,
+                    with_anchors,
+                ): (fid, rep)
                 for fid, rep in cases
             }
             for future in as_completed(future_map):
@@ -306,6 +417,29 @@ def evaluate_candidate(
 
     failures = [r for r in results if not r.ok]
     run_scores = [r.score for r in results if r.ok and r.score is not None]
+    delta_vs_random = [r.delta_vs_random for r in results if r.ok and r.delta_vs_random is not None]
+    delta_vs_local = [r.delta_vs_local for r in results if r.ok and r.delta_vs_local is not None]
+
+    trimmed_mean = None
+    if run_scores:
+        sorted_scores = np.sort(np.asarray(run_scores, dtype=float))
+        trim = int(0.1 * sorted_scores.size)
+        core = sorted_scores[trim:-trim] if (trim > 0 and sorted_scores.size > 2 * trim) else sorted_scores
+        trimmed_mean = float(np.mean(core))
+
+    per_fid: dict[int, list[float]] = {}
+    for item in results:
+        if item.ok and item.score is not None:
+            per_fid.setdefault(item.fid, []).append(float(item.score))
+
+    per_problem = {
+        str(fid): {
+            "score_mean": float(np.mean(vals)),
+            "score_std": float(np.std(vals)),
+            "n": len(vals),
+        }
+        for fid, vals in sorted(per_fid.items())
+    }
 
     summary = {
         "profile": profile,
@@ -313,12 +447,19 @@ def evaluate_candidate(
         "reps": preset["reps"],
         "budget_scale": preset["budget_scale"],
         "parallel_workers": preset["parallel_workers"],
+        "seed_base": int(seed_base),
+        "with_anchors": bool(with_anchors),
         "base_budget": GNBG_BASE_BUDGET,
         "instances_folder": GNBG_INSTANCES_FOLDER,
         "score_mean": float(np.mean(run_scores)) if run_scores else None,
         "score_std": float(np.std(run_scores)) if run_scores else None,
+        "score_median": float(np.median(run_scores)) if run_scores else None,
+        "score_trimmed_mean": trimmed_mean,
+        "delta_vs_random_mean": float(np.mean(delta_vs_random)) if delta_vs_random else None,
+        "delta_vs_local_mean": float(np.mean(delta_vs_local)) if delta_vs_local else None,
         "total_fes": int(sum(r.fes or 0 for r in results)),
         "failures": len(failures),
+        "per_problem": per_problem,
         "results": [asdict(r) for r in results],
     }
 

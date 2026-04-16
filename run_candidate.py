@@ -23,9 +23,12 @@ def append_jsonl(path: str | Path, payload: dict):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=["quick", "search", "timing", "final"], default="quick")
+    parser.add_argument("--profile", choices=["quick", "search", "selection", "timing", "final"], default="quick")
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--budget-scale", type=float, default=None)
+    parser.add_argument("--reps", type=int, default=None)
+    parser.add_argument("--seed-base", type=int, default=12345)
+    parser.add_argument("--with-anchors", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--module", default="candidate")
     parser.add_argument("--class-name", default="Algorithm")
     parser.add_argument("--out", default="results/latest.json")
@@ -38,6 +41,9 @@ def main():
         profile=args.profile,
         workers=args.workers,
         budget_scale=args.budget_scale,
+        reps=args.reps,
+        seed_base=args.seed_base,
+        with_anchors=args.with_anchors,
     )
 
     run_record = {
@@ -53,6 +59,10 @@ def main():
         "profile": run_record["profile"],
         "score_mean": run_record["score_mean"],
         "score_std": run_record["score_std"],
+        "score_median": run_record["score_median"],
+        "score_trimmed_mean": run_record["score_trimmed_mean"],
+        "delta_vs_random_mean": run_record["delta_vs_random_mean"],
+        "delta_vs_local_mean": run_record["delta_vs_local_mean"],
         "failures": run_record["failures"],
         "candidate_sha256": run_record["candidate_sha256"][:12],
         "out": args.out,

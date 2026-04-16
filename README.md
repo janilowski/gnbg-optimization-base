@@ -51,6 +51,12 @@ A slightly more informative run:
 python3 run_candidate.py --profile search
 ```
 
+Selection run (better for ranking candidates than quick/search smoke tests):
+
+```bash
+python3 run_candidate.py --profile selection
+```
+
 Official-style heavier run:
 
 ```bash
@@ -77,6 +83,15 @@ Each record includes:
 - profile
 - mean score
 - score std
+- score median
+- score trimmed mean (10% trimming)
+- deltas vs random-search and local-search anchors
+- per-problem score aggregates
 - per-case results
 - first error, if any
 
+Useful knobs:
+
+- `--reps N` to override repetitions per problem.
+- `--seed-base S` to change the deterministic seed schedule.
+- `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
