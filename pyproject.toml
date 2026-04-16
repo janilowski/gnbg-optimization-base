@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gnbg-codex-simple"
+name = "gnbg-optimization-base"
 version = "0.1.0"
-description = "Minimal GNBG + IOH harness for Codex-generated algorithms"
+description = "Minimal GNBG + IOH harness for agent-generated algorithms"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
