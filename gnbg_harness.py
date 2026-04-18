@@ -73,6 +73,9 @@ class CaseResult:
     budget: int | None = None
     dim: int | None = None
     fes: int | None = None
+    best_value: float | None = None
+    optimum: float | None = None
+    gap_to_optimum: float | None = None
     error: str | None = None
 
 
@@ -99,24 +102,25 @@ class AOCLogger:
         self.best_values.clear()
 
 
-# NOTE:
-# This is a lightweight fallback approximation of the AOCC/AOC-style score used
-# in your larger LLaMEA pipeline. It produces a normalized score in [0, 1] where
-# higher is better, but it is not guaranteed to match your original misc.py
-# helpers exactly. For the competition repo, this is often good enough for a
-# quick-search loop; for official numbers, swap this back to your exact misc.py.
-def correct_aoc(problem, log: AOCLogger, budget: int, upper: float = 1e2) -> float:
+def correct_aoc(
+    problem,
+    log: AOCLogger,
+    budget: int,
+    lower: float = 1e-8,
+    upper: float = 1e8,
+) -> float:
     if not log.best_values:
         return 0.0
 
-    raw = np.asarray(log.best_values, dtype=float)
-    raw = np.minimum(raw, upper)
-
     optimum = getattr(getattr(problem, "optimum", None), "y", None)
     if optimum is None:
-        optimum = np.min(raw)
+        optimum = float(np.min(log.best_values))
 
-    normalized = (upper - raw) / max(1e-12, upper - float(optimum))
+    raw = np.asarray(log.best_values, dtype=float)
+    gap = np.clip(raw - float(optimum), lower, upper)
+
+    log_u, log_l = np.log10(upper), np.log10(lower)
+    normalized = (log_u - np.log10(gap)) / (log_u - log_l)
     normalized = np.clip(normalized, 0.0, 1.0)
 
     if normalized.size < budget:
@@ -316,6 +320,16 @@ def _run_single_case(
         log = AOCLogger()
         log.best_values = list(wrapped_problem.best_values)
         auc = float(correct_aoc(problem, log, scaled_budget))
+
+        best_value = float(wrapped_problem.best_values[-1]) if wrapped_problem.best_values else None
+        optimum_obj = getattr(problem, "optimum", None)
+        optimum = float(optimum_obj.y) if optimum_obj is not None and hasattr(optimum_obj, "y") else None
+        gap_to_optimum = (
+            float(best_value - optimum)
+            if best_value is not None and optimum is not None
+            else None
+        )
+
         log.reset(problem)
         problem.reset()
 
@@ -351,6 +365,9 @@ def _run_single_case(
             budget=scaled_budget,
             dim=wrapped_problem.dim,
             fes=wrapped_problem.evaluations,
+            best_value=best_value,
+            optimum=optimum,
+            gap_to_optimum=gap_to_optimum,
         )
     except Exception as exc:
         return CaseResult(
@@ -419,6 +436,7 @@ def evaluate_candidate(
     run_scores = [r.score for r in results if r.ok and r.score is not None]
     delta_vs_random = [r.delta_vs_random for r in results if r.ok and r.delta_vs_random is not None]
     delta_vs_local = [r.delta_vs_local for r in results if r.ok and r.delta_vs_local is not None]
+    gaps = [r.gap_to_optimum for r in results if r.ok and r.gap_to_optimum is not None]
 
     trimmed_mean = None
     if run_scores:
@@ -428,14 +446,21 @@ def evaluate_candidate(
         trimmed_mean = float(np.mean(core))
 
     per_fid: dict[int, list[float]] = {}
+    per_fid_gap: dict[int, list[float]] = {}
     for item in results:
-        if item.ok and item.score is not None:
+        if not item.ok:
+            continue
+        if item.score is not None:
             per_fid.setdefault(item.fid, []).append(float(item.score))
+        if item.gap_to_optimum is not None:
+            per_fid_gap.setdefault(item.fid, []).append(float(item.gap_to_optimum))
 
     per_problem = {
         str(fid): {
             "score_mean": float(np.mean(vals)),
             "score_std": float(np.std(vals)),
+            "gap_mean": float(np.mean(per_fid_gap[fid])) if fid in per_fid_gap else None,
+            "gap_std": float(np.std(per_fid_gap[fid])) if fid in per_fid_gap else None,
             "n": len(vals),
         }
         for fid, vals in sorted(per_fid.items())
@@ -457,6 +482,8 @@ def evaluate_candidate(
         "score_trimmed_mean": trimmed_mean,
         "delta_vs_random_mean": float(np.mean(delta_vs_random)) if delta_vs_random else None,
         "delta_vs_local_mean": float(np.mean(delta_vs_local)) if delta_vs_local else None,
+        "gap_mean": float(np.mean(gaps)) if gaps else None,
+        "gap_std": float(np.std(gaps)) if gaps else None,
         "total_fes": int(sum(r.fes or 0 for r in results)),
         "failures": len(failures),
         "per_problem": per_problem,
