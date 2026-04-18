@@ -23,7 +23,7 @@ def append_jsonl(path: str | Path, payload: dict):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=["quick", "search", "hard", "selection", "timing", "final"], default="quick")
+    parser.add_argument("--profile", choices=["quick", "search", "hard", "timing", "final"], default="quick")
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--budget-scale", type=float, default=None)
     parser.add_argument("--reps", type=int, default=None)
