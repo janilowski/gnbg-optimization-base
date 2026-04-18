@@ -23,7 +23,7 @@ def append_jsonl(path: str | Path, payload: dict):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", choices=["quick", "search", "selection", "timing", "final"], default="quick")
+    parser.add_argument("--profile", choices=["quick", "search", "hard", "selection", "timing", "final"], default="quick")
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--budget-scale", type=float, default=None)
     parser.add_argument("--reps", type=int, default=None)
@@ -63,6 +63,8 @@ def main():
         "score_trimmed_mean": run_record["score_trimmed_mean"],
         "delta_vs_random_mean": run_record["delta_vs_random_mean"],
         "delta_vs_local_mean": run_record["delta_vs_local_mean"],
+        "gap_mean": run_record["gap_mean"],
+        "gap_std": run_record["gap_std"],
         "failures": run_record["failures"],
         "candidate_sha256": run_record["candidate_sha256"][:12],
         "out": args.out,
