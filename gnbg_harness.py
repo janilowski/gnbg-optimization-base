@@ -544,6 +544,64 @@ def evaluate_candidate(
     return summary
 
 
+def export_submission(
+    results: list[dict],
+    out_dir: str | Path = "results/submission",
+) -> Path:
+    """Write GNBG-III compliant submission .dat files.
+
+    Creates one file per problem: ``f1.dat``, ``f2.dat``, ..., ``f24.dat``.
+    Each file contains exactly one row per successful run and exactly two
+    whitespace-separated numeric columns -- no header line:
+
+        col 1  ``absolute_error``    abs(f_best - f*) at end of run
+        col 2  ``fes_to_threshold``  first FE where error <= SUBMISSION_THRESHOLD
+                                     (= run budget if never reached; ERT convention)
+
+    Parameters
+    ----------
+    results:
+        List of ``CaseResult`` dicts produced by ``evaluate_candidate``
+        (the ``"results"`` key of its return value).
+    out_dir:
+        Directory to write .dat files into.  Created if it does not exist.
+
+    Returns
+    -------
+    Path
+        The output directory path.
+    """
+    from collections import defaultdict
+
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # Group successful runs by problem id, preserving insertion order per fid.
+    by_fid: dict[int, list[dict]] = defaultdict(list)
+    for r in results:
+        if r.get("ok"):
+            by_fid[r["fid"]].append(r)
+
+    for fid, runs in sorted(by_fid.items()):
+        lines: list[str] = []
+        for run in sorted(runs, key=lambda r: r["rep"]):
+            abs_err = run.get("absolute_error")
+            fes_thr = run.get("fes_to_threshold")
+            run_budget = run.get("budget") or SUBMISSION_BUDGET
+            # Use sentinel fallbacks only when a run actually failed to record.
+            if abs_err is None:
+                abs_err = float("nan")
+            if fes_thr is None:
+                # fes_to_threshold may be missing for old result files that
+                # predate this field; fall back to the full budget.
+                fes_thr = run_budget
+            lines.append(f"{abs_err:.6e}  {int(fes_thr)}")
+        dat_path = out_path / f"f{fid}.dat"
+        dat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return out_path
+
+
 def write_json(path: str | Path, payload: dict[str, Any]):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
