@@ -18,31 +18,31 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
         "problem_ids": [1, 2],
         "reps": 1,
         "budget_scale": 0.02,
-        "parallel_workers": 1,
+        "parallel_workers": 2,
     },
     "search": {
         "problem_ids": list(range(1, 25)),
         "reps": 3,
-        "budget_scale": 0.2,
-        "parallel_workers": 8,
+        "budget_scale": 1.0,
+        "parallel_workers": 16,
     },
     "hard": {
-        "problem_ids": [9, 13, 3, 10, 14],
+        "problem_ids": [2, 6, 14, 17, 19, 22],
         "reps": 5,
         "budget_scale": 10.0,
-        "parallel_workers": 8,
+        "parallel_workers": 16,
     },
     "timing": {
         "problem_ids": list(range(1, 25)),
         "reps": 3,
-        "budget_scale": 10.0,
-        "parallel_workers": 8,
+        "budget_scale": 3.0,
+        "parallel_workers": 16,
     },
     "final": {
         "problem_ids": list(range(1, 25)),
-        "reps": 31,
-        "budget_scale": 1.0,
-        "parallel_workers": 8,
+        "reps": 30,
+        "budget_scale": 25.0,
+        "parallel_workers": 32,
     },
 }
 
@@ -125,7 +125,9 @@ def correct_aoc(
 
     if normalized.size < budget:
         pad_value = normalized[-1]
-        normalized = np.pad(normalized, (0, budget - normalized.size), constant_values=pad_value)
+        normalized = np.pad(
+            normalized, (0, budget - normalized.size), constant_values=pad_value
+        )
 
     return float(np.mean(normalized[:budget]))
 
@@ -155,7 +157,9 @@ class IOHProblemAdapter:
         y = self._problem(x)
         y_arr = np.asarray(y)
         if y_arr.size != 1:
-            raise ValueError(f"Expected scalar objective value, got shape {y_arr.shape}")
+            raise ValueError(
+                f"Expected scalar objective value, got shape {y_arr.shape}"
+            )
 
         self.evaluations += 1
         value = float(y_arr.item())
@@ -205,7 +209,9 @@ def _load_ioh_problem(fid: int):
         except Exception as exc:  # pragma: no cover - defensive
             last_error = exc
 
-    detail = f" Last error: {type(last_error).__name__}: {last_error}" if last_error else ""
+    detail = (
+        f" Last error: {type(last_error).__name__}: {last_error}" if last_error else ""
+    )
     raise RuntimeError(
         f"Could not load IOH GNBG problem f{fid} from {GNBG_INSTANCES_FOLDER}.{detail}"
     )
@@ -226,7 +232,9 @@ def _problem_bounds(problem, dim: int) -> tuple[np.ndarray, np.ndarray]:
         return np.asarray(bounds.lb, dtype=float), np.asarray(bounds.ub, dtype=float)
 
     if hasattr(problem, "lower") and hasattr(problem, "upper"):
-        return np.asarray(problem.lower, dtype=float), np.asarray(problem.upper, dtype=float)
+        return np.asarray(problem.lower, dtype=float), np.asarray(
+            problem.upper, dtype=float
+        )
 
     lower = np.full(dim, -5.0, dtype=float)
     upper = np.full(dim, 5.0, dtype=float)
@@ -310,6 +318,7 @@ def _run_single_case(
         algorithm = algorithm_cls(budget=scaled_budget, dim=wrapped_problem.dim)
 
         import time
+
         t0 = time.perf_counter()
         try:
             algorithm(wrapped_problem)
@@ -321,9 +330,17 @@ def _run_single_case(
         log.best_values = list(wrapped_problem.best_values)
         auc = float(correct_aoc(problem, log, scaled_budget))
 
-        best_value = float(wrapped_problem.best_values[-1]) if wrapped_problem.best_values else None
+        best_value = (
+            float(wrapped_problem.best_values[-1])
+            if wrapped_problem.best_values
+            else None
+        )
         optimum_obj = getattr(problem, "optimum", None)
-        optimum = float(optimum_obj.y) if optimum_obj is not None and hasattr(optimum_obj, "y") else None
+        optimum = (
+            float(optimum_obj.y)
+            if optimum_obj is not None and hasattr(optimum_obj, "y")
+            else None
+        )
         gap_to_optimum = (
             float(best_value - optimum)
             if best_value is not None and optimum is not None
@@ -359,8 +376,12 @@ def _run_single_case(
             auc=auc,
             anchor_random_score=anchor_random_score,
             anchor_local_score=anchor_local_score,
-            delta_vs_random=(auc - anchor_random_score) if anchor_random_score is not None else None,
-            delta_vs_local=(auc - anchor_local_score) if anchor_local_score is not None else None,
+            delta_vs_random=(auc - anchor_random_score)
+            if anchor_random_score is not None
+            else None,
+            delta_vs_local=(auc - anchor_local_score)
+            if anchor_local_score is not None
+            else None,
             elapsed_s=elapsed_s,
             budget=scaled_budget,
             dim=wrapped_problem.dim,
@@ -397,7 +418,9 @@ def evaluate_candidate(
     if reps is not None:
         preset["reps"] = max(1, int(reps))
 
-    cases = [(fid, rep) for fid in preset["problem_ids"] for rep in range(preset["reps"])]
+    cases = [
+        (fid, rep) for fid in preset["problem_ids"] for rep in range(preset["reps"])
+    ]
 
     if preset["parallel_workers"] <= 1 or len(cases) <= 1:
         results = [
@@ -434,15 +457,23 @@ def evaluate_candidate(
 
     failures = [r for r in results if not r.ok]
     run_scores = [r.score for r in results if r.ok and r.score is not None]
-    delta_vs_random = [r.delta_vs_random for r in results if r.ok and r.delta_vs_random is not None]
-    delta_vs_local = [r.delta_vs_local for r in results if r.ok and r.delta_vs_local is not None]
+    delta_vs_random = [
+        r.delta_vs_random for r in results if r.ok and r.delta_vs_random is not None
+    ]
+    delta_vs_local = [
+        r.delta_vs_local for r in results if r.ok and r.delta_vs_local is not None
+    ]
     gaps = [r.gap_to_optimum for r in results if r.ok and r.gap_to_optimum is not None]
 
     trimmed_mean = None
     if run_scores:
         sorted_scores = np.sort(np.asarray(run_scores, dtype=float))
         trim = int(0.1 * sorted_scores.size)
-        core = sorted_scores[trim:-trim] if (trim > 0 and sorted_scores.size > 2 * trim) else sorted_scores
+        core = (
+            sorted_scores[trim:-trim]
+            if (trim > 0 and sorted_scores.size > 2 * trim)
+            else sorted_scores
+        )
         trimmed_mean = float(np.mean(core))
 
     per_fid: dict[int, list[float]] = {}
@@ -459,7 +490,9 @@ def evaluate_candidate(
         str(fid): {
             "score_mean": float(np.mean(vals)),
             "score_std": float(np.std(vals)),
-            "gap_mean": float(np.mean(per_fid_gap[fid])) if fid in per_fid_gap else None,
+            "gap_mean": float(np.mean(per_fid_gap[fid]))
+            if fid in per_fid_gap
+            else None,
             "gap_std": float(np.std(per_fid_gap[fid])) if fid in per_fid_gap else None,
             "n": len(vals),
         }
@@ -480,8 +513,12 @@ def evaluate_candidate(
         "score_std": float(np.std(run_scores)) if run_scores else None,
         "score_median": float(np.median(run_scores)) if run_scores else None,
         "score_trimmed_mean": trimmed_mean,
-        "delta_vs_random_mean": float(np.mean(delta_vs_random)) if delta_vs_random else None,
-        "delta_vs_local_mean": float(np.mean(delta_vs_local)) if delta_vs_local else None,
+        "delta_vs_random_mean": float(np.mean(delta_vs_random))
+        if delta_vs_random
+        else None,
+        "delta_vs_local_mean": float(np.mean(delta_vs_local))
+        if delta_vs_local
+        else None,
         "gap_mean": float(np.mean(gaps)) if gaps else None,
         "gap_std": float(np.std(gaps)) if gaps else None,
         "total_fes": int(sum(r.fes or 0 for r in results)),
