@@ -1,4 +1,4 @@
-# Minimal GNBG repo for agent-generated optimization algorithms
+# GNBG for agent-generated optimization algorithms
 
 This repo is the smallest practical setup for evaluating **agent-generated algorithms** on the GNBG benchmark through IOH.
 
@@ -21,15 +21,7 @@ Using `uv`:
 uv sync
 ```
 
-Or with plain pip:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-You still need the GNBG instance files at:
+You need the GNBG instance files at:
 
 ```text
 benchmarks/gnbg/official
@@ -57,7 +49,7 @@ Selection run (better for ranking candidates than quick/search smoke tests):
 python3 run_candidate.py --profile selection
 ```
 
-Official-style heavier run:
+Competition run:
 
 ```bash
 python3 run_candidate.py --profile final
@@ -121,27 +113,4 @@ Each `.dat` file contains **30 rows** and **2 whitespace-separated columns** —
 | Column | Meaning |
 |--------|---------|
 | 1 | `abs(f_best − f*)` — absolute error at end of run |
-| 2 | First FE where error ≤ 1e-8; equals 500 000 if never reached |
-
-**Threshold note:** The competition lists evaluation targets 1e-1, 1e-3, 1e-5, 1e-8.
-Column 2 uses the tightest target (1e-8) as the single "FEs-to-threshold" value per run.
-Runs that never reach 1e-8 report the full budget (500 000), following the ERT convention
-that failures count as the maximum budget.
-
-To package for submission, zip the output directory:
-
-```bash
-zip -r MyAlgorithm_submission.zip results/submission/
-```
-
-Then email to `dsmlossf@gmail.com` with your abstract (see competition page for full requirements).
-
-## Profile reference
-
-| Profile | Problems | Reps | FEs/run | Purpose |
-|---------|----------|------|---------|---------|
-| `quick` | f1–f2 | 1 | 400 | Smoke test during development |
-| `search` | f1–f24 | 3 | 20 000 | Algorithm search / ranking |
-| `hard` | 6 hard problems | 5 | 200 000 | Stress test |
-| `timing` | f1–f24 | 3 | 60 000 | Wall-clock profiling |
-| `final` | f1–f24 | 30 | **500 000** | **GNBG-III compliant submission run** |
+| 2 | First FE where error ≤ SUBMISSION_THRESHOLD; equals 500 000 if never reached |
