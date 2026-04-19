@@ -72,9 +72,6 @@ def main():
     parser.add_argument("--class-name", default="Algorithm")
     parser.add_argument("--out", default="results/latest.json")
     parser.add_argument("--log", default="results/runs.jsonl")
-    # ---------------------------------------------------------------------------
-    # Submission export (GNBG-III competition)
-    # ---------------------------------------------------------------------------
     parser.add_argument(
         "--export-submission",
         action="store_true",

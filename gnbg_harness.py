@@ -13,6 +13,15 @@ from ioh import logger
 GNBG_INSTANCES_FOLDER = "benchmarks/gnbg/official"
 GNBG_BASE_BUDGET = 20000
 
+SUBMISSION_BUDGET = 500_000
+
+# Target threshold for the second column of submission .dat files.
+# The competition evaluation page lists four fixed targets:
+#   1e-1, 1e-3, 1e-5, 1e-8  (from: https://dsmlossf.github.io/GNBG-Competition-2026/)
+# The submission format specifies ONE "FEs-to-threshold" value per run.
+# Runs that never reach SUBMISSION_THRESHOLD report the full budget (should be 500 000)
+SUBMISSION_THRESHOLD = 1e-8
+
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
         "problem_ids": [1, 2],
@@ -41,7 +50,7 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "final": {
         "problem_ids": list(range(1, 25)),
         "reps": 30,
-        "budget_scale": 25.0,
+        "budget_scale": 25.0,  # 20 000 * 25 = 500 000 FEs per run
         "parallel_workers": 32,
     },
 }
@@ -77,6 +86,9 @@ class CaseResult:
     optimum: float | None = None
     absolute_error: float | None = None
     gap_to_optimum: float | None = None
+    fes_to_threshold: int | None = (
+        None  # first FE where error <= SUBMISSION_THRESHOLD, else budget
+    )
     error: str | None = None
 
 
@@ -133,6 +145,35 @@ def correct_aoc(
     return float(np.mean(normalized[:budget]))
 
 
+def _fes_to_threshold(
+    best_values: list[float],
+    optimum: float,
+    threshold: float,
+    budget: int,
+) -> int:
+    """Return the first FE at which ``abs(best_so_far - optimum) <= threshold``.
+
+    If the threshold is never reached within the recorded evaluations, returns
+    ``budget`` (the full budget), following the ERT convention that failures
+    count as the maximum budget.
+
+    Parameters
+    ----------
+    best_values:
+        List of best-so-far objective values, one entry per FE (index 0 = FE 1).
+    optimum:
+        Known optimal value f*.
+    threshold:
+        Target accuracy.  Use ``SUBMISSION_THRESHOLD`` for submission .dat files.
+    budget:
+        Total evaluation budget for the run.
+    """
+    for fe, bv in enumerate(best_values, start=1):
+        if abs(bv - optimum) <= threshold:
+            return fe
+    return budget  # never reached: report full budget (ERT convention)
+
+
 class IOHProblemAdapter:
     def __init__(self, problem, budget: int):
         self._problem = problem
@@ -176,6 +217,15 @@ class IOHProblemAdapter:
         return self._problem.reset()
 
     def __getattr__(self, name: str):
+        # Block algorithm access to GNBG-internal attributes that must not be
+        # used under black-box rules (GNBG-III competition, Rules section).
+        # The harness accesses these on the raw ``problem`` object, not here.
+        if name == "optimum":
+            raise AttributeError(
+                f"'{name}' is a GNBG-internal parameter. "
+                "Algorithms must treat the benchmark as black-box "
+                "(GNBG-III competition rules)."
+            )
         return getattr(self._problem, name)
 
 
@@ -349,6 +399,17 @@ def _run_single_case(
         )
         gap_to_optimum = absolute_error
 
+        # Compute FEs-to-threshold for the submission .dat files.
+        # Reports full budget if the threshold is never reached
+        fes_to_threshold: int | None = None
+        if optimum is not None and wrapped_problem.best_values:
+            fes_to_threshold = _fes_to_threshold(
+                wrapped_problem.best_values,
+                optimum,
+                SUBMISSION_THRESHOLD,
+                scaled_budget,
+            )
+
         log.reset(problem)
         problem.reset()
 
@@ -392,6 +453,7 @@ def _run_single_case(
             optimum=optimum,
             absolute_error=absolute_error,
             gap_to_optimum=gap_to_optimum,
+            fes_to_threshold=fes_to_threshold,
         )
     except Exception as exc:
         return CaseResult(
