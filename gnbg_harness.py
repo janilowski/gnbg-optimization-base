@@ -75,6 +75,7 @@ class CaseResult:
     fes: int | None = None
     best_value: float | None = None
     optimum: float | None = None
+    absolute_error: float | None = None
     gap_to_optimum: float | None = None
     error: str | None = None
 
@@ -341,11 +342,12 @@ def _run_single_case(
             if optimum_obj is not None and hasattr(optimum_obj, "y")
             else None
         )
-        gap_to_optimum = (
-            float(best_value - optimum)
+        absolute_error = (
+            float(abs(best_value - optimum))
             if best_value is not None and optimum is not None
             else None
         )
+        gap_to_optimum = absolute_error
 
         log.reset(problem)
         problem.reset()
@@ -388,6 +390,7 @@ def _run_single_case(
             fes=wrapped_problem.evaluations,
             best_value=best_value,
             optimum=optimum,
+            absolute_error=absolute_error,
             gap_to_optimum=gap_to_optimum,
         )
     except Exception as exc:
@@ -490,6 +493,12 @@ def evaluate_candidate(
         str(fid): {
             "score_mean": float(np.mean(vals)),
             "score_std": float(np.std(vals)),
+            "absolute_error_mean": float(np.mean(per_fid_gap[fid]))
+            if fid in per_fid_gap
+            else None,
+            "absolute_error_std": float(np.std(per_fid_gap[fid]))
+            if fid in per_fid_gap
+            else None,
             "gap_mean": float(np.mean(per_fid_gap[fid]))
             if fid in per_fid_gap
             else None,
@@ -519,6 +528,8 @@ def evaluate_candidate(
         "delta_vs_local_mean": float(np.mean(delta_vs_local))
         if delta_vs_local
         else None,
+        "absolute_error_mean": float(np.mean(gaps)) if gaps else None,
+        "absolute_error_std": float(np.std(gaps)) if gaps else None,
         "gap_mean": float(np.mean(gaps)) if gaps else None,
         "gap_std": float(np.std(gaps)) if gaps else None,
         "total_fes": int(sum(r.fes or 0 for r in results)),
