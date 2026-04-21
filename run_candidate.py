@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,13 @@ from gnbg_harness import evaluate_candidate, write_json
 def sha256_file(path: str | Path) -> str:
     data = Path(path).read_bytes()
     return hashlib.sha256(data).hexdigest()
+
+
+def module_source_path(module_name: str) -> Path:
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
+        raise ModuleNotFoundError(f"Could not resolve source path for module {module_name!r}")
+    return Path(spec.origin)
 
 
 def append_jsonl(path: str | Path, payload: dict):
@@ -48,7 +56,7 @@ def main():
 
     run_record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "candidate_sha256": sha256_file(f"{args.module}.py"),
+        "candidate_sha256": sha256_file(module_source_path(args.module)),
         **summary,
     }
 
