@@ -1,4 +1,4 @@
-# Minimal GNBG repo for agent-generated optimization algorithms
+# GNBG for agent-generated optimization algorithms
 
 This repo is the smallest practical setup for evaluating **agent-generated algorithms** on the GNBG benchmark through IOH.
 
@@ -21,15 +21,7 @@ Using `uv`:
 uv sync
 ```
 
-Or with plain pip:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-You still need the GNBG instance files at:
+You need the GNBG instance files at:
 
 ```text
 benchmarks/gnbg/official
@@ -57,7 +49,7 @@ Selection run (better for ranking candidates than quick/search smoke tests):
 python3 run_candidate.py --profile selection
 ```
 
-Official-style heavier run:
+Competition run:
 
 ```bash
 python3 run_candidate.py --profile final
@@ -95,3 +87,30 @@ Useful knobs:
 - `--reps N` to override repetitions per problem.
 - `--seed-base S` to change the deterministic seed schedule.
 - `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
+
+## Generating a GNBG-III submission pack
+
+Run the full 30 × 24 × 500 000-FE evaluation and export the required `.dat` files in one command:
+
+```bash
+uv run python3 run_candidate.py --profile final --no-with-anchors --export-submission
+```
+
+> **Note:** `--no-with-anchors` skips the random/local baseline comparisons to halve wall-clock time.
+> Omit it if you want the AOC delta metrics in the JSON log.
+
+Output files written to:
+
+```
+results/submission/f1.dat
+results/submission/f2.dat
+...
+results/submission/f24.dat
+```
+
+Each `.dat` file contains **30 rows** and **2 whitespace-separated columns** — no header line:
+
+| Column | Meaning |
+|--------|---------|
+| 1 | `abs(f_best − f*)` — absolute error at end of run |
+| 2 | First FE where error ≤ SUBMISSION_THRESHOLD; equals 500 000 if never reached |

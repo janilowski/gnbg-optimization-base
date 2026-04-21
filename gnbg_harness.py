@@ -13,6 +13,15 @@ from ioh import logger
 GNBG_INSTANCES_FOLDER = "benchmarks/gnbg/official"
 GNBG_BASE_BUDGET = 20000
 
+SUBMISSION_BUDGET = 500_000
+
+# Target threshold for the second column of submission .dat files.
+# The competition evaluation page lists four fixed targets:
+#   1e-1, 1e-3, 1e-5, 1e-8  (from: https://dsmlossf.github.io/GNBG-Competition-2026/)
+# The submission format specifies ONE "FEs-to-threshold" value per run.
+# Runs that never reach SUBMISSION_THRESHOLD report the full budget (should be 500 000)
+SUBMISSION_THRESHOLD = 1e-8
+
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
         "problem_ids": [1, 2],
@@ -41,7 +50,7 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     "final": {
         "problem_ids": list(range(1, 25)),
         "reps": 30,
-        "budget_scale": 25.0,
+        "budget_scale": 25.0,  # 20 000 * 25 = 500 000 FEs per run
         "parallel_workers": 32,
     },
 }
@@ -75,7 +84,11 @@ class CaseResult:
     fes: int | None = None
     best_value: float | None = None
     optimum: float | None = None
+    absolute_error: float | None = None
     gap_to_optimum: float | None = None
+    fes_to_threshold: int | None = (
+        None  # first FE where error <= SUBMISSION_THRESHOLD, else budget
+    )
     error: str | None = None
 
 
@@ -132,6 +145,35 @@ def correct_aoc(
     return float(np.mean(normalized[:budget]))
 
 
+def _fes_to_threshold(
+    best_values: list[float],
+    optimum: float,
+    threshold: float,
+    budget: int,
+) -> int:
+    """Return the first FE at which ``abs(best_so_far - optimum) <= threshold``.
+
+    If the threshold is never reached within the recorded evaluations, returns
+    ``budget`` (the full budget), following the ERT convention that failures
+    count as the maximum budget.
+
+    Parameters
+    ----------
+    best_values:
+        List of best-so-far objective values, one entry per FE (index 0 = FE 1).
+    optimum:
+        Known optimal value f*.
+    threshold:
+        Target accuracy.  Use ``SUBMISSION_THRESHOLD`` for submission .dat files.
+    budget:
+        Total evaluation budget for the run.
+    """
+    for fe, bv in enumerate(best_values, start=1):
+        if abs(bv - optimum) <= threshold:
+            return fe
+    return budget  # never reached: report full budget (ERT convention)
+
+
 class IOHProblemAdapter:
     def __init__(self, problem, budget: int):
         self._problem = problem
@@ -175,6 +217,15 @@ class IOHProblemAdapter:
         return self._problem.reset()
 
     def __getattr__(self, name: str):
+        # Block algorithm access to GNBG-internal attributes that must not be
+        # used under black-box rules (GNBG-III competition, Rules section).
+        # The harness accesses these on the raw ``problem`` object, not here.
+        if name == "optimum":
+            raise AttributeError(
+                f"'{name}' is a GNBG-internal parameter. "
+                "Algorithms must treat the benchmark as black-box "
+                "(GNBG-III competition rules)."
+            )
         return getattr(self._problem, name)
 
 
@@ -341,11 +392,23 @@ def _run_single_case(
             if optimum_obj is not None and hasattr(optimum_obj, "y")
             else None
         )
-        gap_to_optimum = (
-            float(best_value - optimum)
+        absolute_error = (
+            float(abs(best_value - optimum))
             if best_value is not None and optimum is not None
             else None
         )
+        gap_to_optimum = absolute_error
+
+        # Compute FEs-to-threshold for the submission .dat files.
+        # Reports full budget if the threshold is never reached
+        fes_to_threshold: int | None = None
+        if optimum is not None and wrapped_problem.best_values:
+            fes_to_threshold = _fes_to_threshold(
+                wrapped_problem.best_values,
+                optimum,
+                SUBMISSION_THRESHOLD,
+                scaled_budget,
+            )
 
         log.reset(problem)
         problem.reset()
@@ -388,7 +451,9 @@ def _run_single_case(
             fes=wrapped_problem.evaluations,
             best_value=best_value,
             optimum=optimum,
+            absolute_error=absolute_error,
             gap_to_optimum=gap_to_optimum,
+            fes_to_threshold=fes_to_threshold,
         )
     except Exception as exc:
         return CaseResult(
@@ -490,6 +555,12 @@ def evaluate_candidate(
         str(fid): {
             "score_mean": float(np.mean(vals)),
             "score_std": float(np.std(vals)),
+            "absolute_error_mean": float(np.mean(per_fid_gap[fid]))
+            if fid in per_fid_gap
+            else None,
+            "absolute_error_std": float(np.std(per_fid_gap[fid]))
+            if fid in per_fid_gap
+            else None,
             "gap_mean": float(np.mean(per_fid_gap[fid]))
             if fid in per_fid_gap
             else None,
@@ -519,6 +590,8 @@ def evaluate_candidate(
         "delta_vs_local_mean": float(np.mean(delta_vs_local))
         if delta_vs_local
         else None,
+        "absolute_error_mean": float(np.mean(gaps)) if gaps else None,
+        "absolute_error_std": float(np.std(gaps)) if gaps else None,
         "gap_mean": float(np.mean(gaps)) if gaps else None,
         "gap_std": float(np.std(gaps)) if gaps else None,
         "total_fes": int(sum(r.fes or 0 for r in results)),
@@ -531,6 +604,64 @@ def evaluate_candidate(
         summary["first_error"] = failures[0].error
 
     return summary
+
+
+def export_submission(
+    results: list[dict],
+    out_dir: str | Path = "results/submission",
+) -> Path:
+    """Write GNBG-III compliant submission .dat files.
+
+    Creates one file per problem: ``f1.dat``, ``f2.dat``, ..., ``f24.dat``.
+    Each file contains exactly one row per successful run and exactly two
+    whitespace-separated numeric columns -- no header line:
+
+        col 1  ``absolute_error``    abs(f_best - f*) at end of run
+        col 2  ``fes_to_threshold``  first FE where error <= SUBMISSION_THRESHOLD
+                                     (= run budget if never reached; ERT convention)
+
+    Parameters
+    ----------
+    results:
+        List of ``CaseResult`` dicts produced by ``evaluate_candidate``
+        (the ``"results"`` key of its return value).
+    out_dir:
+        Directory to write .dat files into.  Created if it does not exist.
+
+    Returns
+    -------
+    Path
+        The output directory path.
+    """
+    from collections import defaultdict
+
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # Group successful runs by problem id, preserving insertion order per fid.
+    by_fid: dict[int, list[dict]] = defaultdict(list)
+    for r in results:
+        if r.get("ok"):
+            by_fid[r["fid"]].append(r)
+
+    for fid, runs in sorted(by_fid.items()):
+        lines: list[str] = []
+        for run in sorted(runs, key=lambda r: r["rep"]):
+            abs_err = run.get("absolute_error")
+            fes_thr = run.get("fes_to_threshold")
+            run_budget = run.get("budget") or SUBMISSION_BUDGET
+            # Use sentinel fallbacks only when a run actually failed to record.
+            if abs_err is None:
+                abs_err = float("nan")
+            if fes_thr is None:
+                # fes_to_threshold may be missing for old result files that
+                # predate this field; fall back to the full budget.
+                fes_thr = run_budget
+            lines.append(f"{abs_err:.6e}  {int(fes_thr)}")
+        dat_path = out_path / f"f{fid}.dat"
+        dat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return out_path
 
 
 def write_json(path: str | Path, payload: dict[str, Any]):
