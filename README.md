@@ -88,9 +88,11 @@ Useful knobs:
 - `--seed-base S` to change the deterministic seed schedule.
 - `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
 
-## Generating a GNBG-III submission pack
+## Generating an LLM-designed EA submission pack
 
-Run the full 30 × 24 × 500 000-FE evaluation and export the required `.dat` files in one command:
+Run the full 31-run evaluation and export the required `.dat` files in one command.
+The final profile uses the competition budgets: 500,000 FEs for `f1`-`f15`
+and 1,000,000 FEs for `f16`-`f24`.
 
 ```bash
 uv run python3 run_candidate.py --profile final --no-with-anchors --export-submission
@@ -108,9 +110,9 @@ results/submission/f2.dat
 results/submission/f24.dat
 ```
 
-Each `.dat` file contains **30 rows** and **2 whitespace-separated columns** — no header line:
+Each `.dat` file contains **31 rows** and **2 whitespace-separated columns** — no header line:
 
 | Column | Meaning |
 |--------|---------|
 | 1 | `abs(f_best − f*)` — absolute error at end of run |
-| 2 | First FE where error ≤ SUBMISSION_THRESHOLD; equals 500 000 if never reached |
+| 2 | First FE where error ≤ SUBMISSION_THRESHOLD; equals the run budget if never reached |

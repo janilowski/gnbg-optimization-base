@@ -61,13 +61,16 @@ def _validate_submission(out_dir: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate a candidate algorithm on GNBG-III and optionally export submission files."
+        description="Evaluate a candidate algorithm on GNBG and optionally export submission files."
     )
     parser.add_argument(
         "--profile",
         choices=["quick", "search", "hard", "timing", "final"],
         default="quick",
-        help="Evaluation profile (default: quick). Use 'final' for a GNBG-III compliant run.",
+        help=(
+            "Evaluation profile (default: quick). Use 'final' for the "
+            "LLM-designed EA competition budgets."
+        ),
     )
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--budget-scale", type=float, default=None)

@@ -16,10 +16,10 @@ GNBG_BASE_BUDGET = 20000
 SUBMISSION_BUDGET = 500_000
 
 # Target threshold for the second column of submission .dat files.
-# The competition evaluation page lists four fixed targets:
-#   1e-1, 1e-3, 1e-5, 1e-8  (from: https://dsmlossf.github.io/GNBG-Competition-2026/)
+# The LLM-designed EA competition accepts runs at target 1e-8.
 # The submission format specifies ONE "FEs-to-threshold" value per run.
-# Runs that never reach SUBMISSION_THRESHOLD report the full budget (should be 500 000)
+# Runs that never reach SUBMISSION_THRESHOLD report the full budget:
+# 500 000 for f1-f15, 1 000 000 for f16-f24.
 SUBMISSION_THRESHOLD = 1e-8
 
 PROFILE_PRESETS: dict[str, dict[str, Any]] = {
@@ -49,9 +49,9 @@ PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     },
     "final": {
         "problem_ids": list(range(1, 25)),
-        "reps": 30,
-        "budget_scale": 25.0,  # 20 000 * 25 = 500 000 FEs per run
-        "parallel_workers": 32,
+        "reps": 31,
+        "budget_scale": 25.0,  # fallback scale; final defaults are handled per problem
+        "parallel_workers": 128,
     },
 }
 
@@ -218,13 +218,13 @@ class IOHProblemAdapter:
 
     def __getattr__(self, name: str):
         # Block algorithm access to GNBG-internal attributes that must not be
-        # used under black-box rules (GNBG-III competition, Rules section).
+        # used under black-box competition rules.
         # The harness accesses these on the raw ``problem`` object, not here.
         if name == "optimum":
             raise AttributeError(
                 f"'{name}' is a GNBG-internal parameter. "
                 "Algorithms must treat the benchmark as black-box "
-                "(GNBG-III competition rules)."
+                "(black-box competition rules)."
             )
         return getattr(self._problem, name)
 
@@ -296,6 +296,10 @@ def _derive_seed(seed_base: int, fid: int, rep: int) -> int:
     return int(seed_base + fid * 10007 + rep)
 
 
+def _competition_budget(fid: int) -> int:
+    return SUBMISSION_BUDGET if fid <= 15 else 2 * SUBMISSION_BUDGET
+
+
 def _run_random_baseline(problem, budget: int, seed: int) -> list[float]:
     dim = _problem_dim(problem)
     lower, upper = _problem_bounds(problem, dim)
@@ -342,7 +346,7 @@ def _run_single_case(
     class_name: str,
     fid: int,
     rep: int,
-    budget_scale: float,
+    budget: int,
     seed_base: int,
     with_anchors: bool,
 ):
@@ -363,10 +367,9 @@ def _run_single_case(
 
     try:
         problem = _load_ioh_problem(fid)
-        scaled_budget = max(1, int(GNBG_BASE_BUDGET * budget_scale))
-        wrapped_problem = IOHProblemAdapter(problem, scaled_budget)
+        wrapped_problem = IOHProblemAdapter(problem, budget)
 
-        algorithm = algorithm_cls(budget=scaled_budget, dim=wrapped_problem.dim)
+        algorithm = algorithm_cls(budget=budget, dim=wrapped_problem.dim)
 
         import time
 
@@ -379,7 +382,7 @@ def _run_single_case(
 
         log = AOCLogger()
         log.best_values = list(wrapped_problem.best_values)
-        auc = float(correct_aoc(problem, log, scaled_budget))
+        auc = float(correct_aoc(problem, log, budget))
 
         best_value = (
             float(wrapped_problem.best_values[-1])
@@ -407,7 +410,7 @@ def _run_single_case(
                 wrapped_problem.best_values,
                 optimum,
                 SUBMISSION_THRESHOLD,
-                scaled_budget,
+                budget,
             )
 
         log.reset(problem)
@@ -416,17 +419,17 @@ def _run_single_case(
         anchor_random_score = None
         anchor_local_score = None
         if with_anchors:
-            random_trace = _run_random_baseline(problem, scaled_budget, seed)
+            random_trace = _run_random_baseline(problem, budget, seed)
             random_log = AOCLogger()
             random_log.best_values = random_trace
-            anchor_random_score = float(correct_aoc(problem, random_log, scaled_budget))
+            anchor_random_score = float(correct_aoc(problem, random_log, budget))
             random_log.reset(problem)
             problem.reset()
 
-            local_trace = _run_local_baseline(problem, scaled_budget, seed)
+            local_trace = _run_local_baseline(problem, budget, seed)
             local_log = AOCLogger()
             local_log.best_values = local_trace
-            anchor_local_score = float(correct_aoc(problem, local_log, scaled_budget))
+            anchor_local_score = float(correct_aoc(problem, local_log, budget))
             local_log.reset(problem)
             problem.reset()
 
@@ -446,7 +449,7 @@ def _run_single_case(
             if anchor_local_score is not None
             else None,
             elapsed_s=elapsed_s,
-            budget=scaled_budget,
+            budget=budget,
             dim=wrapped_problem.dim,
             fes=wrapped_problem.evaluations,
             best_value=best_value,
@@ -476,6 +479,7 @@ def evaluate_candidate(
     with_anchors: bool = True,
 ) -> dict[str, Any]:
     preset = PROFILE_PRESETS[profile].copy()
+    has_budget_override = budget_scale is not None
     if workers is not None:
         preset["parallel_workers"] = max(1, int(workers))
     if budget_scale is not None:
@@ -483,8 +487,17 @@ def evaluate_candidate(
     if reps is not None:
         preset["reps"] = max(1, int(reps))
 
+    scaled_budget = max(1, int(GNBG_BASE_BUDGET * preset["budget_scale"]))
     cases = [
-        (fid, rep) for fid in preset["problem_ids"] for rep in range(preset["reps"])
+        (
+            fid,
+            rep,
+            _competition_budget(fid)
+            if profile == "final" and not has_budget_override
+            else scaled_budget,
+        )
+        for fid in preset["problem_ids"]
+        for rep in range(preset["reps"])
     ]
 
     if preset["parallel_workers"] <= 1 or len(cases) <= 1:
@@ -494,11 +507,11 @@ def evaluate_candidate(
                 class_name,
                 fid,
                 rep,
-                preset["budget_scale"],
+                budget,
                 seed_base,
                 with_anchors,
             )
-            for fid, rep in cases
+            for fid, rep, budget in cases
         ]
     else:
         results = []
@@ -510,11 +523,11 @@ def evaluate_candidate(
                     class_name,
                     fid,
                     rep,
-                    preset["budget_scale"],
+                    budget,
                     seed_base,
                     with_anchors,
                 ): (fid, rep)
-                for fid, rep in cases
+                for fid, rep, budget in cases
             }
             for future in as_completed(future_map):
                 results.append(future.result())
@@ -610,7 +623,7 @@ def export_submission(
     results: list[dict],
     out_dir: str | Path = "results/submission",
 ) -> Path:
-    """Write GNBG-III compliant submission .dat files.
+    """Write LLM-designed EA competition submission .dat files.
 
     Creates one file per problem: ``f1.dat``, ``f2.dat``, ..., ``f24.dat``.
     Each file contains exactly one row per successful run and exactly two
