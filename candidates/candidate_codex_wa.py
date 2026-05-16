@@ -31,6 +31,21 @@
 
 from __future__ import annotations
 
+# ALGORITHM_ANALYSIS_NOTE_BEGIN
+# Summary: The method is a staged hybrid optimizer that combines deterministic probes, coordinate search, DE, covariance search, and polishing.
+# Search state: It maintains a global incumbent, remaining budget, elite archive, probe results, and phase-specific population state.
+# Candidate generation: Candidate sources include center and axis probes, golden-section coordinate trials, local mutations, DE trials, covariance samples, and pattern directions.
+# Selection and replacement: Every phase keeps improving points through direct objective comparison and stores strong points in an archive.
+# Adaptation: Phase choice, DE parameters, covariance scale, restart behavior, and local search radii depend on progress and incumbent quality.
+# Exploration mechanisms: Exploration comes from diagonal and corner probes, broad DE, restarted covariance search, and archive-seeded restarts.
+# Exploitation mechanisms: Exploitation comes from coordinate line search, adaptive mutation near the best point, covariance refinement, and final pattern polishing.
+# Boundary handling: Candidate vectors are clipped to the domain before evaluation.
+# Budget strategy: The run allocates bounded budget slices to early probes, local search, global search, covariance search, and final polish.
+# Closest known influences: Coordinate descent, golden-section search, SHADE-style differential evolution, CMA-ES-like adaptation, pattern search.
+# Novelty or unusual aspects: It uses cheap deterministic probes to decide whether to emphasize corner-biased search, global exploration, or local polishing.
+# Failure modes: The staged control logic is complex and phase heuristics may misallocate budget on landscapes that do not match the probes.
+# ALGORITHM_ANALYSIS_NOTE_END
+
 import math
 
 import numpy as np
