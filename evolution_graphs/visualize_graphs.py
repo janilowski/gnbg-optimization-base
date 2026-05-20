@@ -1,744 +1,489 @@
-import os
+"""Visualize AST graph statistics for generated BBO candidates.
+
+The original script mixed BP, TSP, and BBO-specific assumptions in one module.
+This version is a small CLI focused on the current BBO candidate corpus. It keeps
+fitness-aware plots when a fitness column exists, and otherwise falls back to
+unsupervised projections and feature/complexity evolution plots.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import shap
 from sklearn.decomposition import PCA
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.manifold import TSNE
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, minmax_scale
-from collections import Counter
-import ast
-
-import re
-
-def prettify_feature_names(feature_names):
-    def prettify(name):
-        # Replace underscores with spaces and capitalize each word
-        return re.sub(r'_', ' ', name).title()
-
-    return [prettify(name) for name in feature_names]
-
-# import xgboost as xgb
-
-# Load the dataset without the "degrees" column
-for problem in ["BP", "TSP", "BBO"]: #
-    data_path = f"ast/graphstats_{problem}.csv"
-    fig_folder = f"ast/img{problem}/"
-    os.makedirs(fig_folder, exist_ok=True)
-    os.makedirs(f"{fig_folder}evo", exist_ok=True)
-
-    # Read all columns except 'degrees'
-    data = pd.read_csv(data_path)
-
-    print(data["fitness"].describe())
-    # data = data.drop(columns=["Betweenness Centrality"])
-
-    # Replace NaN and infinite values with 0
-
-    data.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-    # Filter out LLM configurations containing '1,1'
-    data = data[~data["LLM"].str.contains("1,1")]
-    data = data[~data["LLM"].str.contains("EoH")]
-
-    plt.figure(figsize=(8, 6))
-    plt.hist(data["fitness"], bins=20, edgecolor="black", alpha=0.7)
-    plt.title("Histogram of LLaMEA Fitness")
-    plt.xlabel("Fitness")
-    plt.ylabel("Frequency")
-    plt.grid(axis="y", linestyle="--", alpha=0.7)
-    plt.savefig(f"bins{problem}_fitness.png")
-    plt.clf()
-
-    if problem in ["BP", "TSP"]:
-        # load also the EOH_BPO data and transform the original
-        EOHpath = f"ast/graphstats_EOH_{problem}.csv"
-        EOHdata = pd.read_csv(EOHpath)
-        EOHdata.replace([np.inf, -np.inf], np.nan, inplace=True)
-        EOHdata["fitness"] = EOHdata["fitness"]
-
-        plt.figure(figsize=(8, 6))
-        plt.hist(EOHdata["fitness"], bins=20, edgecolor="black", alpha=0.7)
-        plt.title("Histogram of EoH Fitness")
-        plt.xlabel("Fitness")
-        plt.ylabel("Frequency")
-        plt.grid(axis="y", linestyle="--", alpha=0.7)
-        plt.savefig(f"EoH{problem}_fitness.png")
-        plt.clf()
-
-        # transform the data
-        data["parent_ids"] = data["parent_id"].apply(
-            lambda x: [x] if pd.notnull(x) else []
-        )
-        data["gen"] = data["alg_id"]
-        data = data.drop(columns=["parent_id"])
-        data = pd.concat([data, EOHdata], ignore_index=True)
-
-    if problem == "BP":
-        data["fitness"].fillna(-0.04, inplace=True)
-        data.loc[data["fitness"] < -0.04, "fitness"] = -0.04
-        # data["fitness"] = -1 * data["fitness"]
-    elif problem == "BBO":
-        data["fitness"].fillna(0, inplace=True)
-    else:
-        data["fitness"].fillna(-0.2, inplace=True)
-        data.loc[data["fitness"] < -0.2, "fitness"] = -0.2
-        # data["fitness"] = -1 * data["fitness"]
-        # data["fitness"] = 1 + (data["fitness"] * 20)
-
-    plt.figure(figsize=(8, 6))
-    plt.hist(data["fitness"], bins=20, edgecolor="black", alpha=0.7)
-    plt.title("Histogram of all Fitness")
-    plt.xlabel("Fitness")
-    plt.ylabel("Frequency")
-    plt.grid(axis="y", linestyle="--", alpha=0.7)
-    plt.savefig(f"all{problem}_fitness.png")
-    plt.clf()
-
-    print(problem, data["fitness"].describe())
-    data["fitness"] = minmax_scale(data["fitness"])
-
-    data.fillna(0, inplace=True)
-    # data["fitness"] = minmax_scale(data["fitness"])
-
-    print(data["fitness"].describe())
-
-    # Separate metadata and features
-    metadata_cols = ["fitness", "LLM", "exp_dir", "alg_id"]
-
-    complexity_cols = ["mean_complexity",
-        "total_complexity",
-        "mean_token_count",
-        "total_token_count",
-        "mean_parameter_count",
-        "total_parameter_count"]
-
-    if "code_diff" in data.columns:
-        metadata_cols.append("code_diff")
-    if problem in ["BP", "TSP"]:
-        metadata_cols.append("gen")
-        metadata_cols.append("parent_ids")
-        data["parent_ids"] = data["parent_ids"].apply(
-            lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-        )
-
-    else:
-        metadata_cols.append("parent_id")
-    features = data.drop(columns=metadata_cols)
-    features = features.drop(columns=complexity_cols)
-    metadata = data[metadata_cols]
-    complexity_data = data[complexity_cols]
-
-    # Standardize features for PCA/tSNE
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-    #print("Features:", len(features.columns), features.columns)
 
 
-    # Create a 2D projection using PCA
-    pca = PCA(n_components=2)
-    pca_projection = pca.fit_transform(features_scaled)
-    print(problem, "Explained variance ratio: ", pca.explained_variance_ratio_)
-    print(problem, "PCA components", pca.components_)
-    data["pca_x"], data["pca_y"] = pca_projection[:, 0], pca_projection[:, 1]
+DEFAULT_CSV = Path("ast/graphstats_BBO.csv")
+DEFAULT_OUT_DIR = Path("ast/imgBBO")
 
-    # Create a 2D projection using t-SNE
-    tsne = TSNE(n_components=2, random_state=42)
-    tsne_projection = tsne.fit_transform(features_scaled)
-    data["tsne_x"], data["tsne_y"] = tsne_projection[:, 0], tsne_projection[:, 1]
+COMPLEXITY_COLS = {
+    "mean_complexity",
+    "total_complexity",
+    "mean_token_count",
+    "total_token_count",
+    "mean_parameter_count",
+    "total_parameter_count",
+}
 
-    # Plot PCA projection colored by fitness for each LLM
-    for llm in metadata["LLM"].unique():
-        subset = data[metadata["LLM"] == llm]
-        plt.figure()
-        plt.scatter(
-            subset["pca_x"], subset["pca_y"], c=subset["fitness"], cmap="viridis", s=20
-        )
-        plt.colorbar(label="Fitness")
-        plt.title(f"PCA Projection (Colored by Fitness) - LLM: {llm}")
-        plt.xlabel("PCA 1")
-        plt.ylabel("PCA 2")
-        plt.savefig(f"{fig_folder}PCA_Fitness_LLM_{llm}.png")
-        plt.close()
+BASE_METADATA_COLS = {
+    "schema_version",
+    "corpus",
+    "path",
+    "model",
+    "LLM",
+    "exp_dir",
+    "filename",
+    "candidate_id",
+    "alg_id",
+    "source_index",
+    "sequence_kind",
+    "parent_id",
+    "parent_ids",
+    "lineage_available",
+    "fitness",
+    "fitness_source",
+    "has_fitness",
+    "parse_ok",
+    "graph_ok",
+    "complexity_ok",
+    "error",
+    "code_diff",
+    "gen",
+}
 
-    # Plot t-SNE projection colored by fitness for each LLM
-    for llm in metadata["LLM"].unique():
-        subset = data[metadata["LLM"] == llm]
-        plt.figure()
-        plt.scatter(
-            subset["tsne_x"],
-            subset["tsne_y"],
-            c=subset["fitness"],
-            cmap="viridis",
-            s=20,
-        )
-        plt.colorbar(label="Fitness")
-        plt.title(f"t-SNE Projection (Colored by Fitness) - LLM: {llm}")
-        plt.xlabel("t-SNE 1")
-        plt.ylabel("t-SNE 2")
-        plt.savefig(f"{fig_folder}tSNE_Fitness_LLM_{llm}.png")
-        plt.close()
 
-    # Plot PCA projection colored by LLM
-    plt.figure(figsize=(14, 10))
-    sns.scatterplot(
-        x="pca_x", y="pca_y", hue=metadata["LLM"], data=data, palette="tab10", s=20
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create PCA/t-SNE and feature-evolution plots from BBO AST graph stats."
     )
-    plt.title("PCA Projection (colored by method)")
-    plt.xlabel("PCA 1")
-    plt.ylabel("PCA 2")
-    plt.legend(title="Method", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    plt.savefig(f"{fig_folder}{problem}_PCA_Projection_By_LLM.png")
-    plt.close()
-
-    # Plot t-SNE projection colored by LLM
-    plt.figure(figsize=(14, 10))
-    sns.scatterplot(
-        x="tsne_x", y="tsne_y", hue=metadata["LLM"], data=data, palette="tab10", s=20
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        default=DEFAULT_CSV,
+        help=f"Input graphstats CSV (default: {DEFAULT_CSV}).",
     )
-    plt.title("t-SNE Projection (colored by method)")
-    plt.xlabel("t-SNE 1")
-    plt.ylabel("t-SNE 2")
-    plt.legend(title="Method", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    plt.savefig(f"{fig_folder}tSNE_Projection_By_LLM.png")
-    plt.close()
-
-    # Plot the evolution of each graph feature over the optimization runs, split by LLM
-    for llm in metadata["LLM"].unique():
-        subset = data[metadata["LLM"] == llm]
-        for feature in features.columns:
-            plt.figure()
-            exp_data_sorted = subset.sort_values(by="alg_id")
-            plt.plot(exp_data_sorted["alg_id"], exp_data_sorted[feature])
-            plt.title(f"Evolution of {feature} over Optimization Runs - {llm}")
-            plt.xlabel("Evaluation")
-            plt.ylabel(feature)
-            plt.savefig(f"{fig_folder}Evolution_{feature}_LLM_{llm}.png")
-            plt.close()
-
-    # Plot t-SNE projection colored by experiment folder (exp_dir)
-    plt.figure(figsize=(6, 6))
-    sns.scatterplot(
-        x="tsne_x",
-        y="tsne_y",
-        hue=metadata["LLM"],
-        style=metadata["exp_dir"],
-        data=data,
-        palette="tab10",
-        size="fitness",
-        sizes=(10,150),
-        legend=False,
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=DEFAULT_OUT_DIR,
+        help=f"Directory for generated figures (default: {DEFAULT_OUT_DIR}).",
     )
-    plt.title("t-SNE Projection")
-    plt.xlabel("t-SNE 1")
-    plt.ylabel("t-SNE 2")
-    # plt.legend(title='Experiment Folder')
-    plt.tight_layout()
-    plt.savefig(f"{fig_folder}tSNE_Projection_By_Exp_Folder.pdf")
-    plt.close()
-
-    plt.figure(figsize=(10, 10))
-    ax = sns.scatterplot(
-        x="tsne_x",
-        y="tsne_y",
-        hue=metadata["LLM"],
-        data=data,
-        palette="tab10",
-        size="fitness",
-        sizes=(10,150),
-        legend=True,
+    parser.add_argument(
+        "--problem",
+        default="BBO",
+        help="Problem label used in plot titles and filenames (default: BBO).",
     )
-    sns.move_legend(
-        ax, "lower center",
-        bbox_to_anchor=(.5, 1), ncol=3, title=None, frameon=False,
+    parser.add_argument(
+        "--group-col",
+        default=None,
+        help="Column used to group candidates. Defaults to model, then LLM, then exp_dir.",
     )
-    #plt.title("t-SNE Projection (colored by optimization run)")
-    plt.xlabel("t-SNE 1")
-    plt.ylabel("t-SNE 2")
-    plt.tight_layout()
-    # plt.legend(title='Experiment Folder')
-    plt.savefig(f"{fig_folder}tSNE_Projection_By_Exp_Folder_legend.pdf")
-    plt.close()
+    parser.add_argument(
+        "--sequence-col",
+        default="alg_id",
+        help="Column used as pseudo-evolution order (default: alg_id).",
+    )
+    parser.add_argument(
+        "--fitness-col",
+        default="fitness",
+        help="Optional fitness column. Fitness-aware plots are skipped if absent or empty.",
+    )
+    parser.add_argument(
+        "--include-complexity-in-projection",
+        action="store_true",
+        help="Include complexity metrics in PCA/t-SNE features.",
+    )
+    parser.add_argument(
+        "--top-evolution-features",
+        type=int,
+        default=24,
+        help="Maximum number of per-feature evolution plots to write (default: 24).",
+    )
+    return parser.parse_args()
 
-    # Create a 1D projection using PCA
-    pca = PCA(n_components=1)
-    pca_projection = pca.fit_transform(features_scaled)
-    print(problem, "Explained variance 1D: ", pca.explained_variance_ratio_)
-    data["pca_x"] = pca_projection[:, 0]
 
-    # Create a 1D projection using t-SNE
-    tsne = TSNE(n_components=1, random_state=42)
-    tsne_projection = tsne.fit_transform(features_scaled)
-    data["tsne_x"] = tsne_projection[:, 0]
+def prettify(name: str) -> str:
+    return re.sub(r"_+", " ", name).title()
 
-    # Plot the evolution in t-SNE feature space for each experiment folder
-    tsne_first_component = data["tsne_x"]
-    for exp_dir in metadata["exp_dir"].unique():
-        subset = data[data["exp_dir"] == exp_dir]
 
-        if problem in ["BP", "TSP"]:
-            parent_counts = Counter(
-                parent_id
-                for parent_ids in subset["parent_ids"]
-                for parent_id in parent_ids
-            )
+def safe_name(name: object) -> str:
+    value = str(name)
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+    return value or "group"
+
+
+def choose_group_col(data: pd.DataFrame, requested: str | None) -> str:
+    if requested and requested in data.columns:
+        return requested
+    for column in ("model", "LLM", "exp_dir"):
+        if column in data.columns:
+            return column
+    data["group"] = "BBO"
+    return "group"
+
+
+def ensure_sequence_col(data: pd.DataFrame, requested: str) -> str:
+    if requested in data.columns:
+        data[requested] = pd.to_numeric(data[requested], errors="coerce")
+        if data[requested].isna().all():
+            data[requested] = np.arange(len(data))
         else:
-            parent_counts = subset["parent_id"].value_counts()
-        subset.loc[:, "parent_size"] = subset["alg_id"].map(
-            lambda x: (parent_counts[x]) if x in parent_counts else 1
-        )
+            data[requested] = data[requested].fillna(method="ffill").fillna(0)
+        return requested
 
-        plt.figure()
-        for _, row in subset.iterrows():
-            if problem in ["BP", "TSP"]:
-                for parent_id in row["parent_ids"]:
-                    if parent_id in subset["alg_id"].values:
-                        parent_row = subset[subset["alg_id"] == parent_id].iloc[0]
-                        plt.plot(
-                            [parent_row["gen"], row["gen"]],
-                            [parent_row["tsne_x"], row["tsne_x"]],
-                            "-",
-                            color="k",
-                            alpha=0.2,
-                        )
+    data["sequence"] = np.arange(len(data))
+    return "sequence"
 
-                    plt.plot(
-                        row["gen"],
-                        row["tsne_x"],
-                        "o",
-                        color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                    )
-            else:
-                if row["parent_id"] in subset["alg_id"].values:
-                    parent_row = subset[subset["alg_id"] == row["parent_id"]].iloc[0]
-                    plt.plot(
-                        [parent_row["alg_id"], row["alg_id"]],
-                        [parent_row["tsne_x"], row["tsne_x"]],
-                        "-",
-                        color="k",
-                        alpha=0.2,
-                    )
-                    plt.plot(
-                        row["alg_id"],
-                        row["tsne_x"],
-                        "o",
-                        color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                    )
-        plt.title(f"Evolution in t-SNE Feature Space - Exp_dir: {exp_dir}")
-        plt.xlabel("EvaluationD")
-        plt.ylabel("t-SNE 1")
-        plt.savefig(f'{fig_folder}evo/tSNE_Evolution_Exp_{exp_dir.replace("/","")}.png')
-        plt.close()
 
-    if problem not in ["BP", "TSP"]:
-        # Plot the evolution in t-SNE feature space for each experiment folder, colored by fitness
-        tsne_first_component = data["tsne_x"]
-        for llm in metadata["LLM"].unique():
-            llm_subset = data[data["LLM"] == llm]
-            unique_exp_dirs = llm_subset["exp_dir"].unique()
-            num_exp_dirs = len(unique_exp_dirs)
-            num_cols = 3
-            num_rows = int(np.ceil(num_exp_dirs / num_cols))
-            fig, axes = plt.subplots(
-                num_rows, num_cols, figsize=(18, num_rows * 6), sharey=True
-            )
-            axes = axes.flatten()
+def has_usable_fitness(data: pd.DataFrame, fitness_col: str) -> bool:
+    if fitness_col not in data.columns:
+        return False
+    data[fitness_col] = pd.to_numeric(data[fitness_col], errors="coerce")
+    return data[fitness_col].notna().any()
 
-            for i, exp_dir in enumerate(unique_exp_dirs):
-                ax = axes[i]
-                subset = llm_subset[llm_subset["exp_dir"] == exp_dir]
-                if problem in ["BP", "TSP"]:
-                    parent_counts = Counter(
-                        parent_id
-                        for parent_ids in subset["parent_ids"]
-                        for parent_id in parent_ids
-                    )
-                else:
-                    parent_counts = subset["parent_id"].value_counts()
-                subset["parent_size"] = subset["alg_id"].map(
-                    lambda x: parent_counts[x] + 5 if x in parent_counts else 5
-                )
 
-                for _, row in subset.iterrows():
-                    if row["parent_id"] in subset["alg_id"].values:
-                        parent_row = subset[subset["alg_id"] == row["parent_id"]].iloc[
-                            0
-                        ]
-                        ax.plot(
-                            [parent_row["alg_id"], row["alg_id"]],
-                            [parent_row["tsne_x"], row["tsne_x"]],
-                            "-o",
-                            markersize=row["parent_size"],
-                            color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                        )
-                # ax.set_title(f'Exp_dir: {exp_dir}')
-                ax.set_xlabel("Evaluation")
-                ax.set_ylabel("t-SNE 1")
-                ax.set_ylim(-80, 80)
+def metadata_columns(data: pd.DataFrame, group_col: str, sequence_col: str, fitness_col: str) -> set[str]:
+    metadata = set(BASE_METADATA_COLS)
+    metadata.update({group_col, sequence_col, fitness_col})
+    metadata.update(column for column in data.columns if column.startswith("note_"))
+    metadata.update(column for column in data.columns if data[column].dtype == "object")
+    metadata.update(column for column in data.columns if data[column].dtype == "bool")
+    return metadata
 
-            # Add colorbar as the last subplot
-            sm = plt.cm.ScalarMappable(
-                cmap="viridis",
-                norm=plt.Normalize(
-                    vmin=data["fitness"].min(), vmax=data["fitness"].max()
-                ),
-            )
-            sm.set_array([])
-            cbar = fig.colorbar(
-                sm, ax=axes[-1], orientation="vertical", fraction=0.05, pad=0.05
-            )
-            cbar.ax.tick_params(labelsize=14)
 
-            for j in range(i + 1, len(axes)):
-                fig.delaxes(axes[j])
+def numeric_feature_frame(
+    data: pd.DataFrame,
+    metadata: set[str],
+    include_complexity: bool,
+) -> pd.DataFrame:
+    excluded = metadata if include_complexity else metadata | COMPLEXITY_COLS
+    candidate_features = data.drop(columns=[c for c in excluded if c in data.columns])
+    features = candidate_features.apply(pd.to_numeric, errors="coerce")
+    features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.dropna(axis=1, how="all")
+    if features.empty:
+        raise ValueError("No numeric feature columns are available for visualization.")
 
-            plt.suptitle(f"Evolution in t-SNE Feature Space - {llm}", y=1.05)
-            plt.tight_layout()
-            plt.savefig(f"{fig_folder}evo/tSNE_Evolution_LLM_{llm}.png")
-            plt.close()
+    features = features.fillna(features.median(numeric_only=True)).fillna(0)
+    varying_cols = [column for column in features.columns if features[column].nunique() > 1]
+    return features[varying_cols] if varying_cols else features
 
-    for code_feature in [
-        "total_complexity",
-        "total_token_count",
-        "total_parameter_count",
-    ]:
-        # Plot the evolution in Cyclomatic Complexity space for each experiment folder, colored by fitness, with first 3 exp folders per LLM
-        llms = metadata["LLM"].unique()
-        print(llms)
-        num_cols = 3
-        num_rows = len(llms)
-        fig, axes = plt.subplots(
-            num_rows, num_cols, figsize=(18, num_rows * 6), sharey=True, sharex=False
-        )
-        axes = axes.reshape(num_rows, num_cols)
 
-        for row_idx, llm in enumerate(llms):
-            llm_subset = data[data["LLM"] == llm]
-            unique_exp_dirs = llm_subset["exp_dir"].unique()[
-                :3
-            ]  # Only take the first 3 exp_dirs
-            for col_idx, exp_dir in enumerate(unique_exp_dirs):
-                ax = axes[row_idx, col_idx]
-                subset = llm_subset[llm_subset["exp_dir"] == exp_dir]
-                if problem in ["BP", "TSP"]:
-                    parent_counts = Counter(
-                        parent_id
-                        for sublist in subset["parent_ids"]
-                        for parent_id in sublist
-                    )
-                else:
-                    parent_counts = subset["parent_id"].value_counts()
-                subset["parent_size"] = subset["alg_id"].map(
-                    lambda x: (parent_counts[x]/2) + 3 if x in parent_counts else 3
-                )
+def scaled_features(features: pd.DataFrame) -> np.ndarray:
+    return StandardScaler().fit_transform(features)
 
-                for _, row in subset.iterrows():
-                    if problem in ["BP", "TSP"]:
-                        for parent_id in row["parent_ids"]:
-                            if parent_id in subset["alg_id"].values:
-                                parent_row = subset[subset["alg_id"] == parent_id].iloc[
-                                    0
-                                ]
-                                ax.plot(
-                                    [parent_row["gen"], row["gen"]],
-                                    [parent_row[code_feature], row[code_feature]],
-                                    "-",
-                                    color="k",
-                                    alpha=0.2,
-                                )
 
-                            ax.plot(
-                                row["gen"],
-                                row[code_feature],
-                                "o",
-                                markersize=row["parent_size"],
-                                color=plt.cm.viridis(
-                                    row["fitness"] / max(data["fitness"])
-                                ),
-                            )
+def add_pca_projection(data: pd.DataFrame, features_scaled: np.ndarray, problem: str) -> None:
+    components = min(2, features_scaled.shape[0], features_scaled.shape[1])
+    if components < 1:
+        data["pca_x"] = 0.0
+        data["pca_y"] = 0.0
+        return
 
-                    else:
-                        if row["parent_id"] in subset["alg_id"].values:
-                            parent_row = subset[
-                                subset["alg_id"] == row["parent_id"]
-                            ].iloc[0]
-                            ax.plot(
-                                [parent_row["alg_id"], row["alg_id"]],
-                                [parent_row[code_feature], row[code_feature]],
-                                "-",
-                                color="k",
-                                alpha=0.2,
-                            )
-                        ax.plot(
-                            row["alg_id"],
-                            row[code_feature],
-                            "o",
-                            markersize=row["parent_size"],
-                            color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                        )
-                ax.set_title(f"{llm}", fontsize=20)  # , Exp_dir: {exp_dir}
-                ax.set_xlabel("Evaluation", fontsize=20)
-                ax.set_ylabel(code_feature.replace("_", " "), fontsize=20)
-                ax.set_xticklabels(ax.get_xticks(), fontsize=18)  # Increase x-axis tick font size
-                ax.set_yticklabels(ax.get_yticks(), fontsize=18)  # Increase y-axis tick font size
-                ax.set_ylim(data[code_feature].min() - 1, data[code_feature].max() + 1)
+    projection = PCA(n_components=components).fit_transform(features_scaled)
+    data["pca_x"] = projection[:, 0]
+    data["pca_y"] = projection[:, 1] if components > 1 else 0.0
+    print(f"{problem} PCA components: {components}")
 
-        # Add colorbar as the last subplot in each row
-        for row_idx in range(num_rows):
-            sm = plt.cm.ScalarMappable(
-                cmap="viridis",
-                norm=plt.Normalize(
-                    vmin=data["fitness"].min(), vmax=data["fitness"].max()
-                ),
-            )
-            sm.set_array([])
-            cbar = fig.colorbar(
-                sm,
-                ax=axes[row_idx, -1],
-                orientation="vertical",
-                fraction=0.05,
-                pad=0.05,
-            )
-            cbar.ax.tick_params(labelsize=14)
 
-        plt.suptitle(
-            f'Evolution in {code_feature.replace("_", " ")} - All LLMs', y=1.02
-        )
-        plt.tight_layout()
-        plt.savefig(f"{fig_folder}{problem}_{code_feature}_Evolution_All_LLMs.png")
-        plt.close()
+def add_tsne_projection(data: pd.DataFrame, features_scaled: np.ndarray) -> bool:
+    n_samples = features_scaled.shape[0]
+    if n_samples < 3:
+        data["tsne_x"] = np.nan
+        data["tsne_y"] = np.nan
+        return False
 
-    # Plot the evolution in t-SNE feature space for each experiment folder, colored by fitness, with first 3 exp folders per LLM
-    if problem not in ["BP", "TSP"]:
-        llms = metadata["LLM"].unique()
-        print(llms)
-        num_cols = 3
-        num_rows = len(llms)
-        fig, axes = plt.subplots(
-            num_rows, num_cols, figsize=(18, num_rows * 6), sharey=True, sharex=False
-        )
-        axes = axes.reshape(num_rows, num_cols)
+    perplexity = min(30, max(2, n_samples // 10))
+    if perplexity >= n_samples:
+        perplexity = max(1, n_samples - 1)
 
-        for row_idx, llm in enumerate(llms):
-            llm_subset = data[data["LLM"] == llm]
-            unique_exp_dirs = llm_subset["exp_dir"].unique()[
-                :3
-            ]  # Only take the first 3 exp_dirs
-            for col_idx, exp_dir in enumerate(unique_exp_dirs):
-                ax = axes[row_idx, col_idx]
-                subset = llm_subset[llm_subset["exp_dir"] == exp_dir]
-                if problem in ["BP", "TSP"]:
-                    parent_counts = Counter(
-                        parent_id
-                        for parent_ids in subset["parent_ids"]
-                        for parent_id in parent_ids
-                    )
-                else:
-                    parent_counts = subset["parent_id"].value_counts()
-                subset["parent_size"] = subset["alg_id"].map(
-                    lambda x: parent_counts[x] + 5 if x in parent_counts else 5
-                )
+    projection = TSNE(
+        n_components=2,
+        random_state=42,
+        perplexity=perplexity,
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(features_scaled)
+    data["tsne_x"], data["tsne_y"] = projection[:, 0], projection[:, 1]
+    return True
 
-                for _, row in subset.iterrows():
-                    if row["parent_id"] in subset["alg_id"].values:
-                        parent_row = subset[subset["alg_id"] == row["parent_id"]].iloc[
-                            0
-                        ]
-                        ax.plot(
-                            [parent_row["alg_id"], row["alg_id"]],
-                            [parent_row["tsne_x"], row["tsne_x"]],
-                            "-o",
-                            markersize=row["parent_size"],
-                            color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                        )
-                ax.set_title(f"{llm}")  # , Exp_dir: {exp_dir}
-                ax.set_xlabel("Evaluation")
-                ax.set_ylabel("t-SNE 1")
-                ax.set_ylim(data["tsne_x"].min() - 5, data["tsne_x"].max() + 5)
 
-        # Add colorbar as the last subplot in each row
-        for row_idx in range(num_rows):
-            sm = plt.cm.ScalarMappable(
-                cmap="viridis",
-                norm=plt.Normalize(
-                    vmin=data["fitness"].min(), vmax=data["fitness"].max()
-                ),
-            )
-            sm.set_array([])
-            cbar = fig.colorbar(
-                sm,
-                ax=axes[row_idx, -1],
-                orientation="vertical",
-                fraction=0.05,
-                pad=0.05,
-            )
-            cbar.ax.tick_params(labelsize=14)
-
-        plt.suptitle("Evolution in t-SNE Feature Space - All LLMs", y=1.02)
-        plt.tight_layout()
-        plt.savefig(f"{fig_folder}tSNE_Evolution_All_LLMs.png")
-        plt.close()
-
-    # Plot the evolution in PCA feature space for each experiment folder, colored by fitness, with first 3 exp folders per LLM
-    fig, axes = plt.subplots(
-        num_rows, num_cols, figsize=(18, num_rows * 6), sharey=True, sharex=False
-    )
-    axes = axes.reshape(num_rows, num_cols)
-
-    for row_idx, llm in enumerate(llms):
-        llm_subset = data[data["LLM"] == llm]
-        unique_exp_dirs = llm_subset["exp_dir"].unique()[
-            :3
-        ]  # Only take the first 3 exp_dirs
-        for col_idx, exp_dir in enumerate(unique_exp_dirs):
-            ax = axes[row_idx, col_idx]
-            subset = llm_subset[llm_subset["exp_dir"] == exp_dir]
-            if problem in ["BP", "TSP"]:
-                parent_counts = Counter(
-                    parent_id
-                    for parent_ids in subset["parent_ids"]
-                    for parent_id in parent_ids
-                )
-            else:
-                parent_counts = subset["parent_id"].value_counts()
-            subset.loc[:, "parent_size"] = subset["alg_id"].map(
-                lambda x: (parent_counts[x]/2) + 3 if x in parent_counts else 3
-            )
-
-            for _, row in subset.iterrows():
-                if problem in ["BP", "TSP"]:
-                    for parent_id in row["parent_ids"]:
-                        if parent_id in subset["alg_id"].values:
-                            parent_row = subset[subset["alg_id"] == parent_id].iloc[0]
-                            ax.plot(
-                                [parent_row["gen"], row["gen"]],
-                                [parent_row["pca_x"], row["pca_x"]],
-                                "-",
-                                color="k",
-                                alpha=0.2,
-                            )
-                        ax.plot(
-                            row["gen"],
-                            row["pca_x"],
-                            "o",
-                            markersize=row["parent_size"],
-                            color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                        )
-                else:
-                    if row["parent_id"] in subset["alg_id"].values:
-                        parent_row = subset[subset["alg_id"] == row["parent_id"]].iloc[
-                            0
-                        ]
-                        ax.plot(
-                            [parent_row["alg_id"], row["alg_id"]],
-                            [parent_row["pca_x"], row["pca_x"]],
-                            "-",
-                            color="k",
-                            alpha=0.2,
-                        )
-
-                    ax.plot(
-                        row["alg_id"],
-                        row["pca_x"],
-                        "o",
-                        markersize=row["parent_size"],
-                        color=plt.cm.viridis(row["fitness"] / max(data["fitness"])),
-                    )
-            ax.set_title(f"{llm}", fontsize=20)  # , Exp_dir: {exp_dir}
-            ax.set_xlabel("Evaluation", fontsize=20)
-            ax.set_ylabel(f"PCA 1- {pca.explained_variance_ratio_[0]:0.2f}", fontsize=20)
-            ax.set_xticklabels(ax.get_xticks(), fontsize=18)  # Increase x-axis tick font size
-            ax.set_yticklabels(ax.get_yticks(), fontsize=18)  # Increase y-axis tick font size
-            ax.set_ylim(data["pca_x"].min() - 1, data["pca_x"].max() + 1)
-
-    # Add colorbar as the last subplot in each row
-    for row_idx in range(num_rows):
-        sm = plt.cm.ScalarMappable(
-            cmap="viridis",
-            norm=plt.Normalize(vmin=data["fitness"].min(), vmax=data["fitness"].max()),
-        )
-        sm.set_array([])
-        cbar = fig.colorbar(
-            sm, ax=axes[row_idx, -1], orientation="vertical", fraction=0.05, pad=0.05
-        )
-        cbar.ax.tick_params(labelsize=14)
-
-    plt.suptitle("Evolution in PCA Feature Space - All LLMs", y=1.02)
+def save_histogram(data: pd.DataFrame, column: str, out_path: Path, title: str) -> None:
+    values = pd.to_numeric(data[column], errors="coerce").dropna()
+    if values.empty:
+        return
+    plt.figure(figsize=(8, 6))
+    plt.hist(values, bins=20, edgecolor="black", alpha=0.7)
+    plt.title(title)
+    plt.xlabel(prettify(column))
+    plt.ylabel("Frequency")
+    plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"{fig_folder}{problem}_PCA_Evolution_All_LLMs.png")
+    plt.savefig(out_path)
     plt.close()
 
-    if True:
-        # Create output directory if not exists
-        output_dir = f"{fig_folder}features"
-        os.makedirs(output_dir, exist_ok=True)
 
-        #split for EoH, RS and LLaMEA
-        for method in ["EoH", "LLaMEA"]:
-            method_data = data[data["LLM"].str.contains(method, na=False)]
-            if len(method_data) == 0:
-                continue
-            method_data = method_data.drop(columns=["pca_x","pca_y","tsne_x","tsne_y"])
-            if problem == "BBO":
-                metadata_cols.remove("LLM")
-            method_features = method_data.drop(columns=metadata_cols).copy()
-            if problem == "BBO":
-                method_features['LLM'] = method_features['LLM'].astype('category').cat.codes
-            #method_features = method_features.drop(columns=complexity_cols)
-            method_metadata = method_data[metadata_cols]
+def save_projection(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    group_col: str,
+    out_path: Path,
+    title: str,
+    fitness_col: str | None = None,
+) -> None:
+    plt.figure(figsize=(10, 8))
+    kwargs = {
+        "x": x_col,
+        "y": y_col,
+        "hue": group_col,
+        "data": data,
+        "palette": "tab10",
+        "s": 28,
+    }
+    if fitness_col is not None:
+        kwargs["size"] = fitness_col
+        kwargs["sizes"] = (20, 150)
+    ax = sns.scatterplot(**kwargs)
+    sns.move_legend(ax, "upper left", bbox_to_anchor=(1.02, 1), title=prettify(group_col))
+    plt.title(title)
+    plt.xlabel(prettify(x_col))
+    plt.ylabel(prettify(y_col))
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
 
-            # Correlation plot of each feature with fitness
-            correlations = method_features.corrwith(method_metadata["fitness"])
-            plt.figure(figsize=(10, 6))
-            sns.barplot(x=correlations.index, y=correlations.values)
-            plt.xticks(rotation=90)
-            plt.title(f"Correlation of Features with Fitness for {method}")
-            plt.ylabel("Correlation Coefficient")
-            plt.tight_layout()
-            plt.savefig(f"{fig_folder}features/{problem}_Feature_Fitness_Correlation_{method}.png")
-            plt.close()
 
-            # Prettify the column names of the dataframe
-            prettified_columns = prettify_feature_names(method_features.columns)
-            method_features_pretty = method_features.copy()
-            method_features_pretty.columns = prettified_columns
+def save_group_fitness_projection(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    group_col: str,
+    fitness_col: str,
+    out_dir: Path,
+    prefix: str,
+) -> None:
+    for group_value in sorted(data[group_col].dropna().unique()):
+        subset = data[data[group_col] == group_value]
+        plt.figure(figsize=(7, 6))
+        plt.scatter(subset[x_col], subset[y_col], c=subset[fitness_col], cmap="viridis", s=24)
+        plt.colorbar(label=prettify(fitness_col))
+        plt.title(f"{prefix} Colored By Fitness - {group_value}")
+        plt.xlabel(prettify(x_col))
+        plt.ylabel(prettify(y_col))
+        plt.tight_layout()
+        plt.savefig(out_dir / f"{prefix}_Fitness_{safe_name(group_value)}.png")
+        plt.close()
 
-            # Train a Random Forest model and analyze feature importances
-            X_train, X_test, y_train, y_test = train_test_split(
-                method_features_pretty, method_metadata["fitness"], test_size=0.3, random_state=42
+
+def save_feature_evolution(
+    data: pd.DataFrame,
+    features: pd.DataFrame,
+    group_col: str,
+    sequence_col: str,
+    out_dir: Path,
+    limit: int,
+) -> None:
+    evolution_dir = out_dir / "evolution"
+    evolution_dir.mkdir(parents=True, exist_ok=True)
+
+    feature_order = features.var(numeric_only=True).sort_values(ascending=False).index[:limit]
+    for feature in feature_order:
+        plt.figure(figsize=(10, 6))
+        for group_value in sorted(data[group_col].dropna().unique()):
+            subset = data[data[group_col] == group_value].sort_values(sequence_col)
+            plt.plot(subset[sequence_col], subset[feature], label=str(group_value), alpha=0.8)
+        plt.title(f"Evolution of {prettify(feature)}")
+        plt.xlabel(prettify(sequence_col))
+        plt.ylabel(prettify(feature))
+        plt.legend(loc="best", fontsize="small")
+        plt.tight_layout()
+        plt.savefig(evolution_dir / f"Evolution_{safe_name(feature)}.png")
+        plt.close()
+
+
+def save_complexity_evolution(
+    data: pd.DataFrame,
+    group_col: str,
+    sequence_col: str,
+    out_dir: Path,
+) -> None:
+    available = [column for column in COMPLEXITY_COLS if column in data.columns]
+    if not available:
+        return
+
+    complexity_dir = out_dir / "complexity"
+    complexity_dir.mkdir(parents=True, exist_ok=True)
+    for column in sorted(available):
+        values = pd.to_numeric(data[column], errors="coerce")
+        if values.notna().sum() == 0:
+            continue
+        data[column] = values
+        plt.figure(figsize=(10, 6))
+        for group_value in sorted(data[group_col].dropna().unique()):
+            subset = data[data[group_col] == group_value].sort_values(sequence_col)
+            plt.plot(subset[sequence_col], subset[column], label=str(group_value), alpha=0.8)
+        plt.title(f"Evolution of {prettify(column)}")
+        plt.xlabel(prettify(sequence_col))
+        plt.ylabel(prettify(column))
+        plt.legend(loc="best", fontsize="small")
+        plt.tight_layout()
+        plt.savefig(complexity_dir / f"Evolution_{safe_name(column)}.png")
+        plt.close()
+
+
+def save_fitness_feature_analysis(
+    data: pd.DataFrame,
+    features: pd.DataFrame,
+    group_col: str,
+    fitness_col: str,
+    out_dir: Path,
+    problem: str,
+) -> None:
+    if data[fitness_col].notna().sum() < 5 or data[fitness_col].nunique(dropna=True) < 2:
+        print("Skipping supervised feature analysis: not enough varied fitness values.")
+        return
+
+    features_dir = out_dir / "features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+    target = minmax_scale(data[fitness_col].fillna(data[fitness_col].median()))
+
+    correlations = features.corrwith(pd.Series(target, index=features.index))
+    correlations = correlations.dropna().sort_values(key=np.abs, ascending=False)
+    if not correlations.empty:
+        plt.figure(figsize=(12, 7))
+        sns.barplot(x=correlations.index[:30], y=correlations.values[:30])
+        plt.xticks(rotation=90)
+        plt.title("Top Feature Correlations With Fitness")
+        plt.ylabel("Correlation")
+        plt.tight_layout()
+        plt.savefig(features_dir / f"{problem}_Feature_Fitness_Correlation.png")
+        plt.close()
+
+    if len(features) < 10:
+        print("Skipping Random Forest feature analysis: fewer than 10 samples.")
+        return
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        features,
+        target,
+        test_size=0.3,
+        random_state=42,
+    )
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    print(f"{problem} Random Forest fitness model: MSE={mse:.4f} R2={r2:.4f}")
+
+    importances = pd.Series(model.feature_importances_, index=features.columns)
+    importances = importances.sort_values(ascending=False).head(30)
+    plt.figure(figsize=(12, 7))
+    sns.barplot(x=importances.index, y=importances.values)
+    plt.xticks(rotation=90)
+    plt.title(f"Random Forest Feature Importances By {prettify(group_col)}")
+    plt.ylabel("Importance")
+    plt.tight_layout()
+    plt.savefig(features_dir / f"{problem}_Random_Forest_Feature_Importance_{r2:.4f}.png")
+    plt.close()
+
+
+def main() -> None:
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = pd.read_csv(args.csv)
+    data = data.replace([np.inf, -np.inf], np.nan)
+    group_col = choose_group_col(data, args.group_col)
+    sequence_col = ensure_sequence_col(data, args.sequence_col)
+    fitness_available = has_usable_fitness(data, args.fitness_col)
+
+    metadata = metadata_columns(data, group_col, sequence_col, args.fitness_col)
+    features = numeric_feature_frame(data, metadata, args.include_complexity_in_projection)
+    features_scaled = scaled_features(features)
+    for column in features.columns:
+        data[column] = features[column]
+
+    print(f"Loaded {len(data)} {args.problem} rows from {args.csv}")
+    print(f"Grouping by {group_col}; using {len(features.columns)} numeric projection features.")
+    if fitness_available:
+        print(data[args.fitness_col].describe())
+        save_histogram(
+            data,
+            args.fitness_col,
+            args.out_dir / f"{args.problem}_Fitness_Histogram.png",
+            f"{args.problem} Fitness Distribution",
+        )
+    else:
+        print("Fitness column is absent or empty; skipping fitness-colored plots.")
+
+    add_pca_projection(data, features_scaled, args.problem)
+    tsne_available = add_tsne_projection(data, features_scaled)
+
+    save_projection(
+        data,
+        "pca_x",
+        "pca_y",
+        group_col,
+        args.out_dir / f"{args.problem}_PCA_By_{safe_name(group_col)}.png",
+        f"{args.problem} PCA Projection",
+        args.fitness_col if fitness_available else None,
+    )
+    if tsne_available:
+        save_projection(
+            data,
+            "tsne_x",
+            "tsne_y",
+            group_col,
+            args.out_dir / f"{args.problem}_tSNE_By_{safe_name(group_col)}.png",
+            f"{args.problem} t-SNE Projection",
+            args.fitness_col if fitness_available else None,
+        )
+
+    if fitness_available:
+        save_group_fitness_projection(
+            data,
+            "pca_x",
+            "pca_y",
+            group_col,
+            args.fitness_col,
+            args.out_dir,
+            "PCA",
+        )
+        if tsne_available:
+            save_group_fitness_projection(
+                data,
+                "tsne_x",
+                "tsne_y",
+                group_col,
+                args.fitness_col,
+                args.out_dir,
+                "tSNE",
             )
-            rf = RandomForestRegressor(n_estimators=100, random_state=42)
-            rf.fit(X_train, y_train)
-            y_pred = rf.predict(X_test)
-            mse = mean_squared_error(y_test, y_pred)
-            r2_rf = rf.score(X_test, y_test)
-            print(problem, f"Random Forest Model Performance: MSE: {mse:.4f} R^2: {r2_rf:.4f} Method {method}")
+        save_fitness_feature_analysis(data, features, group_col, args.fitness_col, args.out_dir, args.problem)
 
-            # Plot feature importances
-            importances = rf.feature_importances_
-            plt.figure(figsize=(10, 6))
-            sns.barplot(x=method_features.columns, y=importances)
-            plt.xticks(rotation=90)
-            plt.title("Random Forest Feature Importances")
-            plt.ylabel("Importance Score")
-            plt.tight_layout()
-            plt.savefig(f"{fig_folder}features/Random_Forest_Feature_Importance_{method}_{r2_rf:.4f}.png")
-            plt.close()
+    save_feature_evolution(
+        data,
+        features,
+        group_col,
+        sequence_col,
+        args.out_dir,
+        args.top_evolution_features,
+    )
+    save_complexity_evolution(data, group_col, sequence_col, args.out_dir)
 
-            best_model = (
-                rf  # max([(rf, r2_rf), (gb, r2_gb), (xgbr, r2_xgb)], key=lambda x: x[1])[0]
-            )
-            explainer = shap.Explainer(best_model, X_train)
-            shap_values = explainer(X_test, check_additivity=False)
-            plt.figure()
-            shap.summary_plot(shap_values, X_test, show=False, max_display=10)
-            plt.tight_layout()
-            plt.savefig(f"{fig_folder}features/{problem}_SHAP_Feature_Importance_{method}.png")
-            plt.close()
+
+if __name__ == "__main__":
+    main()

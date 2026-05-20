@@ -4,6 +4,14 @@ This script adapts ``python_ast_analysis.py`` into a reusable batch extractor fo
 the model-organized corpus under ``candidates/throwaways``. It writes one CSV row
 per Python candidate file and keeps per-file errors in the output instead of
 stopping the full corpus run.
+
+Throwaway corpus schema:
+    - ``model`` is the canonical grouping column, derived from the parent folder.
+    - ``alg_id`` is a pseudo-evolution index: stable filename order within model.
+    - ``parent_id`` / ``parent_ids`` are compatibility columns only; this corpus
+      has no known lineage, so ``lineage_available`` is always false.
+    - ``fitness`` is optional and intentionally blank unless a later merge step
+      supplies validation metrics.
 """
 
 from __future__ import annotations
@@ -23,15 +31,30 @@ from python_ast_analysis import process_file
 
 DEFAULT_CORPUS_DIR = Path("candidates/throwaways")
 DEFAULT_OUTPUT_PATH = Path("ast/graphstats_throwaways.csv")
+SCHEMA_VERSION = "throwaways_v1"
+CORPUS_NAME = "throwaways"
 
 METADATA_FIELDS = [
+    "schema_version",
+    "corpus",
     "path",
     "model",
+    "LLM",
+    "exp_dir",
     "filename",
     "candidate_id",
     "alg_id",
     "source_index",
+    "sequence_kind",
+    "parent_id",
+    "parent_ids",
+    "lineage_available",
+    "fitness",
+    "fitness_source",
+    "has_fitness",
     "parse_ok",
+    "graph_ok",
+    "complexity_ok",
     "error",
 ]
 
@@ -114,13 +137,28 @@ def build_row(path: Path, alg_id: int) -> dict[str, Any]:
     source_index = extract_source_index(path)
 
     row: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "corpus": CORPUS_NAME,
         "path": display_path(path),
         "model": model,
+        # Legacy aliases used by the current visualization script. New code
+        # should prefer ``model`` and treat ``exp_dir`` as a grouping alias.
+        "LLM": model,
+        "exp_dir": model,
         "filename": path.name,
         "candidate_id": candidate_id,
         "alg_id": alg_id,
         "source_index": source_index if source_index is not None else "",
+        "sequence_kind": "filename_order_within_model",
+        "parent_id": "",
+        "parent_ids": "[]",
+        "lineage_available": False,
+        "fitness": "",
+        "fitness_source": "",
+        "has_fitness": False,
         "parse_ok": True,
+        "graph_ok": True,
+        "complexity_ok": True,
         "error": "",
     }
 
@@ -130,6 +168,8 @@ def build_row(path: Path, alg_id: int) -> dict[str, Any]:
             stats = process_file(str(path), visualize=False)
     except Exception as exc:  # Keep corpus extraction robust across bad candidates.
         row["parse_ok"] = False
+        row["graph_ok"] = False
+        row["complexity_ok"] = False
         row["error"] = f"{type(exc).__name__}: {exc}"
     else:
         row.update({key: normalize_value(value) for key, value in stats.items()})
