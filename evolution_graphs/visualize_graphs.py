@@ -9,6 +9,7 @@ unsupervised projections and feature/complexity evolution plots.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -24,8 +25,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, minmax_scale
 
 
-DEFAULT_CSV = Path("ast/graphstats_BBO.csv")
-DEFAULT_OUT_DIR = Path("ast/imgBBO")
+RESULTS_DIR = Path("evolution_graphs/results")
+DEFAULT_CSV = RESULTS_DIR / "graphstats_throwaways.csv"
+DEFAULT_OUT_DIR = RESULTS_DIR / "img_throwaways"
 
 COMPLEXITY_COLS = {
     "mean_complexity",
@@ -61,6 +63,37 @@ BASE_METADATA_COLS = {
     "code_diff",
     "gen",
 }
+
+DEFAULT_AST_PROJECTION_FEATURES = [
+    "Assortativity",
+    "Average Eccentricity",
+    "Average Shortest Path",
+    "Clustering Variance",
+    "Degree Entropy",
+    "Degree Variance",
+    "Depth Entropy",
+    "Diameter",
+    "Edge Density",
+    "Edges",
+    "Max Clustering",
+    "Max Degree",
+    "Max Depth",
+    "Mean Clustering",
+    "Mean Degree",
+    "Mean Depth",
+    "Min Clustering",
+    "Min Degree",
+    "Min Depth",
+    "Nodes",
+    "Radius",
+    "Transitivity",
+]
+
+DEFAULT_COMPLEXITY_FEATURES = [
+    "mean_complexity",
+    "mean_parameter_count",
+    "mean_token_count",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,13 +135,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-complexity-in-projection",
         action="store_true",
-        help="Include complexity metrics in PCA/t-SNE features.",
+        help="Append complexity metrics to the default AST-only PCA/t-SNE feature matrix.",
+    )
+    parser.add_argument(
+        "--use-all-numeric-features",
+        action="store_true",
+        help="Ignore the curated candidate feature list and use all numeric non-metadata columns.",
     )
     parser.add_argument(
         "--top-evolution-features",
         type=int,
         default=24,
         help="Maximum number of per-feature evolution plots to write (default: 24).",
+    )
+    parser.add_argument(
+        "--tsne-perplexity",
+        type=float,
+        default=None,
+        help="Optional t-SNE perplexity override. By default it is chosen from sample count.",
+    )
+    parser.add_argument(
+        "--umap-neighbors",
+        type=int,
+        default=15,
+        help="UMAP n_neighbors value when umap-learn is installed (default: 15).",
+    )
+    parser.add_argument(
+        "--umap-min-dist",
+        type=float,
+        default=0.1,
+        help="UMAP min_dist value when umap-learn is installed (default: 0.1).",
     )
     return parser.parse_args()
 
@@ -139,7 +195,7 @@ def ensure_sequence_col(data: pd.DataFrame, requested: str) -> str:
         if data[requested].isna().all():
             data[requested] = np.arange(len(data))
         else:
-            data[requested] = data[requested].fillna(method="ffill").fillna(0)
+            data[requested] = data[requested].ffill().fillna(0)
         return requested
 
     data["sequence"] = np.arange(len(data))
@@ -166,9 +222,24 @@ def numeric_feature_frame(
     data: pd.DataFrame,
     metadata: set[str],
     include_complexity: bool,
+    use_all_numeric_features: bool,
 ) -> pd.DataFrame:
-    excluded = metadata if include_complexity else metadata | COMPLEXITY_COLS
-    candidate_features = data.drop(columns=[c for c in excluded if c in data.columns])
+    if not use_all_numeric_features:
+        requested_features = list(DEFAULT_AST_PROJECTION_FEATURES)
+        if include_complexity:
+            requested_features.extend(DEFAULT_COMPLEXITY_FEATURES)
+        present = [column for column in requested_features if column in data.columns]
+        if present:
+            candidate_features = data[present].copy()
+        else:
+            candidate_features = pd.DataFrame(index=data.index)
+    else:
+        candidate_features = pd.DataFrame(index=data.index)
+
+    if candidate_features.empty:
+        excluded = metadata if include_complexity else metadata | COMPLEXITY_COLS
+        candidate_features = data.drop(columns=[c for c in excluded if c in data.columns])
+
     features = candidate_features.apply(pd.to_numeric, errors="coerce")
     features = features.replace([np.inf, -np.inf], np.nan)
     features = features.dropna(axis=1, how="all")
@@ -181,42 +252,199 @@ def numeric_feature_frame(
 
 
 def scaled_features(features: pd.DataFrame) -> np.ndarray:
-    return StandardScaler().fit_transform(features)
+    scaled = StandardScaler().fit_transform(features)
+    return np.nan_to_num(scaled, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def add_pca_projection(data: pd.DataFrame, features_scaled: np.ndarray, problem: str) -> None:
+def matrix_has_variance(matrix: np.ndarray) -> bool:
+    return matrix.size > 0 and bool(np.any(np.nanstd(matrix, axis=0) > 1e-12))
+
+
+def unique_row_count(matrix: np.ndarray) -> int:
+    if matrix.size == 0:
+        return 0
+    return int(np.unique(np.round(matrix, decimals=12), axis=0).shape[0])
+
+
+def add_pca_projection(data: pd.DataFrame, features_scaled: np.ndarray, problem: str) -> dict[str, object]:
+    info: dict[str, object] = {
+        "method": "PCA",
+        "available": False,
+        "status": "not_run",
+        "components": 0,
+        "explained_variance_ratio": [],
+    }
     components = min(2, features_scaled.shape[0], features_scaled.shape[1])
-    if components < 1:
+    if components < 1 or not matrix_has_variance(features_scaled):
         data["pca_x"] = 0.0
         data["pca_y"] = 0.0
-        return
+        info["status"] = "skipped_no_variance_or_features"
+        return info
 
-    projection = PCA(n_components=components).fit_transform(features_scaled)
+    try:
+        pca = PCA(n_components=components)
+        projection = pca.fit_transform(features_scaled)
+    except Exception as exc:
+        data["pca_x"] = 0.0
+        data["pca_y"] = 0.0
+        info["status"] = f"failed: {type(exc).__name__}: {exc}"
+        return info
+
     data["pca_x"] = projection[:, 0]
     data["pca_y"] = projection[:, 1] if components > 1 else 0.0
     print(f"{problem} PCA components: {components}")
+    info.update(
+        {
+            "available": True,
+            "status": "ok",
+            "components": components,
+            "explained_variance_ratio": [float(v) for v in pca.explained_variance_ratio_],
+        }
+    )
+    return info
 
 
-def add_tsne_projection(data: pd.DataFrame, features_scaled: np.ndarray) -> bool:
-    n_samples = features_scaled.shape[0]
+def choose_tsne_perplexity(n_samples: int, requested: float | None) -> float | None:
     if n_samples < 3:
+        return None
+    if requested is not None:
+        return min(max(1.0, float(requested)), float(n_samples - 1))
+    return min(30.0, max(5.0, float(n_samples // 10)), float(n_samples - 1))
+
+
+def add_tsne_projection(
+    data: pd.DataFrame,
+    features_scaled: np.ndarray,
+    requested_perplexity: float | None,
+) -> dict[str, object]:
+    info: dict[str, object] = {
+        "method": "t-SNE",
+        "available": False,
+        "status": "not_run",
+        "perplexity": None,
+        "unique_rows": unique_row_count(features_scaled),
+    }
+    n_samples = features_scaled.shape[0]
+    perplexity = choose_tsne_perplexity(n_samples, requested_perplexity)
+    if perplexity is None:
         data["tsne_x"] = np.nan
         data["tsne_y"] = np.nan
-        return False
+        info["status"] = "skipped_too_few_samples"
+        return info
+    if info["unique_rows"] < 3 or not matrix_has_variance(features_scaled):
+        data["tsne_x"] = np.nan
+        data["tsne_y"] = np.nan
+        info["status"] = "skipped_not_enough_unique_feature_rows"
+        info["perplexity"] = perplexity
+        return info
 
-    perplexity = min(30, max(2, n_samples // 10))
-    if perplexity >= n_samples:
-        perplexity = max(1, n_samples - 1)
+    try:
+        projection = TSNE(
+            n_components=2,
+            random_state=42,
+            perplexity=perplexity,
+            init="pca",
+            learning_rate="auto",
+        ).fit_transform(features_scaled)
+    except Exception as exc:
+        data["tsne_x"] = np.nan
+        data["tsne_y"] = np.nan
+        info["status"] = f"failed: {type(exc).__name__}: {exc}"
+        info["perplexity"] = perplexity
+        return info
 
-    projection = TSNE(
-        n_components=2,
-        random_state=42,
-        perplexity=perplexity,
-        init="pca",
-        learning_rate="auto",
-    ).fit_transform(features_scaled)
     data["tsne_x"], data["tsne_y"] = projection[:, 0], projection[:, 1]
-    return True
+    info.update({"available": True, "status": "ok", "perplexity": perplexity})
+    return info
+
+
+def add_umap_projection(
+    data: pd.DataFrame,
+    features_scaled: np.ndarray,
+    n_neighbors: int,
+    min_dist: float,
+) -> dict[str, object]:
+    info: dict[str, object] = {
+        "method": "UMAP",
+        "available": False,
+        "status": "not_run",
+        "n_neighbors": None,
+        "min_dist": min_dist,
+        "unique_rows": unique_row_count(features_scaled),
+    }
+    n_samples = features_scaled.shape[0]
+    if n_samples < 3:
+        data["umap_x"] = np.nan
+        data["umap_y"] = np.nan
+        info["status"] = "skipped_too_few_samples"
+        return info
+    if info["unique_rows"] < 3 or not matrix_has_variance(features_scaled):
+        data["umap_x"] = np.nan
+        data["umap_y"] = np.nan
+        info["status"] = "skipped_not_enough_unique_feature_rows"
+        return info
+
+    try:
+        import umap
+    except ImportError:
+        data["umap_x"] = np.nan
+        data["umap_y"] = np.nan
+        info["status"] = "skipped_missing_umap_learn"
+        return info
+
+    safe_neighbors = min(max(2, int(n_neighbors)), n_samples - 1)
+    try:
+        reducer = umap.UMAP(
+            n_components=2,
+            n_neighbors=safe_neighbors,
+            min_dist=float(min_dist),
+            random_state=42,
+        )
+        projection = reducer.fit_transform(features_scaled)
+    except Exception as exc:
+        data["umap_x"] = np.nan
+        data["umap_y"] = np.nan
+        info["status"] = f"failed: {type(exc).__name__}: {exc}"
+        info["n_neighbors"] = safe_neighbors
+        return info
+
+    data["umap_x"], data["umap_y"] = projection[:, 0], projection[:, 1]
+    info.update({"available": True, "status": "ok", "n_neighbors": safe_neighbors})
+    return info
+
+
+def write_projection_metadata(
+    out_dir: Path,
+    args: argparse.Namespace,
+    data: pd.DataFrame,
+    features: pd.DataFrame,
+    group_col: str,
+    sequence_col: str,
+    pca_info: dict[str, object],
+    tsne_info: dict[str, object],
+    umap_info: dict[str, object],
+) -> None:
+    metadata = {
+        "input_csv": str(args.csv),
+        "problem": args.problem,
+        "rows": int(len(data)),
+        "group_col": group_col,
+        "groups": sorted(str(value) for value in data[group_col].dropna().unique()),
+        "sequence_col": sequence_col,
+        "feature_count": int(len(features.columns)),
+        "features": list(features.columns),
+        "projection_feature_policy": "ast_only_default",
+        "requested_ast_projection_features": DEFAULT_AST_PROJECTION_FEATURES,
+        "requested_complexity_features": DEFAULT_COMPLEXITY_FEATURES,
+        "missing_requested_ast_projection_features": [
+            column for column in DEFAULT_AST_PROJECTION_FEATURES if column not in data.columns
+        ],
+        "pca": pca_info,
+        "tsne": tsne_info,
+        "umap": umap_info,
+    }
+    with (out_dir / "projection_metadata.json").open("w", encoding="utf-8") as file:
+        json.dump(metadata, file, indent=2)
 
 
 def save_histogram(data: pd.DataFrame, column: str, out_path: Path, title: str) -> None:
@@ -243,12 +471,19 @@ def save_projection(
     title: str,
     fitness_col: str | None = None,
 ) -> None:
+    required = [x_col, y_col]
+    if fitness_col is not None:
+        required.append(fitness_col)
+    plot_data = data.replace([np.inf, -np.inf], np.nan).dropna(subset=required)
+    if plot_data.empty:
+        return
+
     plt.figure(figsize=(10, 8))
     kwargs = {
         "x": x_col,
         "y": y_col,
         "hue": group_col,
-        "data": data,
+        "data": plot_data,
         "palette": "tab10",
         "s": 28,
     }
@@ -265,6 +500,59 @@ def save_projection(
     plt.close()
 
 
+def save_candidate_projection(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    sequence_col: str,
+    out_path: Path,
+    title: str,
+) -> None:
+    plot_data = data.replace([np.inf, -np.inf], np.nan).dropna(subset=[x_col, y_col, sequence_col])
+    if plot_data.empty:
+        return
+
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(
+        plot_data[x_col],
+        plot_data[y_col],
+        c=plot_data[sequence_col],
+        cmap="viridis",
+        s=30,
+        alpha=0.85,
+        linewidths=0.2,
+        edgecolors="black",
+    )
+    plt.colorbar(scatter, label=prettify(sequence_col))
+    plt.title(title)
+    plt.xlabel(prettify(x_col))
+    plt.ylabel(prettify(y_col))
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+
+def save_projection_coordinates(
+    data: pd.DataFrame,
+    features: pd.DataFrame,
+    group_col: str,
+    sequence_col: str,
+    out_dir: Path,
+) -> None:
+    id_columns = [
+        column
+        for column in ["path", "model", "LLM", "filename", "candidate_id", group_col, sequence_col]
+        if column in data.columns
+    ]
+    projection_columns = [
+        column
+        for column in ["pca_x", "pca_y", "tsne_x", "tsne_y", "umap_x", "umap_y"]
+        if column in data.columns
+    ]
+    export_columns = list(dict.fromkeys(id_columns + projection_columns + list(features.columns)))
+    data[export_columns].to_csv(out_dir / "candidate_projection.csv", index=False)
+
+
 def save_group_fitness_projection(
     data: pd.DataFrame,
     x_col: str,
@@ -276,6 +564,9 @@ def save_group_fitness_projection(
 ) -> None:
     for group_value in sorted(data[group_col].dropna().unique()):
         subset = data[data[group_col] == group_value]
+        subset = subset.replace([np.inf, -np.inf], np.nan).dropna(subset=[x_col, y_col, fitness_col])
+        if subset.empty:
+            continue
         plt.figure(figsize=(7, 6))
         plt.scatter(subset[x_col], subset[y_col], c=subset[fitness_col], cmap="viridis", s=24)
         plt.colorbar(label=prettify(fitness_col))
@@ -411,7 +702,12 @@ def main() -> None:
     fitness_available = has_usable_fitness(data, args.fitness_col)
 
     metadata = metadata_columns(data, group_col, sequence_col, args.fitness_col)
-    features = numeric_feature_frame(data, metadata, args.include_complexity_in_projection)
+    features = numeric_feature_frame(
+        data,
+        metadata,
+        args.include_complexity_in_projection,
+        args.use_all_numeric_features,
+    )
     features_scaled = scaled_features(features)
     for column in features.columns:
         data[column] = features[column]
@@ -429,8 +725,23 @@ def main() -> None:
     else:
         print("Fitness column is absent or empty; skipping fitness-colored plots.")
 
-    add_pca_projection(data, features_scaled, args.problem)
-    tsne_available = add_tsne_projection(data, features_scaled)
+    pca_info = add_pca_projection(data, features_scaled, args.problem)
+    tsne_info = add_tsne_projection(data, features_scaled, args.tsne_perplexity)
+    umap_info = add_umap_projection(data, features_scaled, args.umap_neighbors, args.umap_min_dist)
+    tsne_available = bool(tsne_info["available"])
+    umap_available = bool(umap_info["available"])
+    write_projection_metadata(
+        args.out_dir,
+        args,
+        data,
+        features,
+        group_col,
+        sequence_col,
+        pca_info,
+        tsne_info,
+        umap_info,
+    )
+    save_projection_coordinates(data, features, group_col, sequence_col, args.out_dir)
 
     save_projection(
         data,
@@ -438,8 +749,16 @@ def main() -> None:
         "pca_y",
         group_col,
         args.out_dir / f"{args.problem}_PCA_By_{safe_name(group_col)}.png",
-        f"{args.problem} PCA Projection",
+        f"{args.problem} PCA Projection - Candidate Points Colored By {prettify(group_col)}",
         args.fitness_col if fitness_available else None,
+    )
+    save_candidate_projection(
+        data,
+        "pca_x",
+        "pca_y",
+        sequence_col,
+        args.out_dir / f"{args.problem}_PCA_By_Candidate.png",
+        f"{args.problem} PCA Projection - Candidate Points Colored By {prettify(sequence_col)}",
     )
     if tsne_available:
         save_projection(
@@ -448,8 +767,34 @@ def main() -> None:
             "tsne_y",
             group_col,
             args.out_dir / f"{args.problem}_tSNE_By_{safe_name(group_col)}.png",
-            f"{args.problem} t-SNE Projection",
+            f"{args.problem} t-SNE Projection - Candidate Points Colored By {prettify(group_col)}",
             args.fitness_col if fitness_available else None,
+        )
+        save_candidate_projection(
+            data,
+            "tsne_x",
+            "tsne_y",
+            sequence_col,
+            args.out_dir / f"{args.problem}_tSNE_By_Candidate.png",
+            f"{args.problem} t-SNE Projection - Candidate Points Colored By {prettify(sequence_col)}",
+        )
+    if umap_available:
+        save_projection(
+            data,
+            "umap_x",
+            "umap_y",
+            group_col,
+            args.out_dir / f"{args.problem}_UMAP_By_{safe_name(group_col)}.png",
+            f"{args.problem} UMAP Projection - Candidate Points Colored By {prettify(group_col)}",
+            args.fitness_col if fitness_available else None,
+        )
+        save_candidate_projection(
+            data,
+            "umap_x",
+            "umap_y",
+            sequence_col,
+            args.out_dir / f"{args.problem}_UMAP_By_Candidate.png",
+            f"{args.problem} UMAP Projection - Candidate Points Colored By {prettify(sequence_col)}",
         )
 
     if fitness_available:
@@ -471,6 +816,16 @@ def main() -> None:
                 args.fitness_col,
                 args.out_dir,
                 "tSNE",
+            )
+        if umap_available:
+            save_group_fitness_projection(
+                data,
+                "umap_x",
+                "umap_y",
+                group_col,
+                args.fitness_col,
+                args.out_dir,
+                "UMAP",
             )
         save_fitness_feature_analysis(data, features, group_col, args.fitness_col, args.out_dir, args.problem)
 

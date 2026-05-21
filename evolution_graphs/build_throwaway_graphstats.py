@@ -30,7 +30,7 @@ from python_ast_analysis import process_file
 
 
 DEFAULT_CORPUS_DIR = Path("candidates/throwaways")
-DEFAULT_OUTPUT_PATH = Path("ast/graphstats_throwaways.csv")
+DEFAULT_OUTPUT_PATH = Path("evolution_graphs/results/graphstats_throwaways.csv")
 SCHEMA_VERSION = "throwaways_v1"
 CORPUS_NAME = "throwaways"
 
