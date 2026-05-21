@@ -17,6 +17,7 @@ dependencies = [
 [dependency-groups]
 bertopic = [
   "bertopic>=0.17.0",
+  "einops>=0.8.0",
 ]
 
 [tool.setuptools]
