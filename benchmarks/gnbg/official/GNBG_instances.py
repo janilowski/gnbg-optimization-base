@@ -36,7 +36,7 @@ Copyright notice: (c) 2023 Danial Yazdani
 import os
 import numpy as np
 from scipy.io import loadmat
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
 from scipy.optimize import differential_evolution
 
 

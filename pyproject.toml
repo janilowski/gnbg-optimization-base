@@ -21,3 +21,18 @@ bertopic = [
 
 [tool.setuptools]
 py-modules = ["gnbg_harness", "candidate", "run_candidate"]
+
+[tool.basedpyright]
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = false
+include = [
+  "candidate.py",
+  "gnbg_harness.py",
+  "run_candidate.py",
+  "analysis",
+]
+exclude = [
+  "candidates",
+  "results",
+  ".venv",
+]
