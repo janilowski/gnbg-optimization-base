@@ -280,6 +280,14 @@ def tail(text: str, limit: int = 4000) -> str:
     return text[-limit:]
 
 
+def completed_text(text: str | bytes | None) -> str:
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        return text.decode("utf-8", errors="replace")
+    return text
+
+
 def validate_candidate(
     *,
     candidate_path: Path,
@@ -327,8 +335,8 @@ def validate_candidate(
         return ValidationResult(
             ok=False,
             summary=None,
-            stdout_tail=tail(exc.stdout or ""),
-            stderr_tail=tail(exc.stderr or ""),
+            stdout_tail=tail(completed_text(exc.stdout)),
+            stderr_tail=tail(completed_text(exc.stderr)),
             error=f"validation timed out after {timeout_s}s",
         )
 
