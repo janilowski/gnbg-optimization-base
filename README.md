@@ -103,6 +103,19 @@ BERTopic for topic labels and per-candidate assignments. By default BERTopic may
 use its configured embedding backend; pass `--embedding-model` to use a specific
 local or cached model.
 
+For embedding models that require custom Hugging Face model code, such as
+`nomic-ai/CodeRankEmbed`, pass `--trust-remote-code` explicitly:
+
+```bash
+uv run --group bertopic python3 analysis/topic_candidates.py \
+  --skip-local-candidates \
+  --source-root candidates/throwaways \
+  --source-glob '**/*.py' \
+  --embedding-model nomic-ai/CodeRankEmbed \
+  --trust-remote-code \
+  --out-dir results/bertopic_coderank_throwaways
+```
+
 Outputs are written to:
 
 ```text
