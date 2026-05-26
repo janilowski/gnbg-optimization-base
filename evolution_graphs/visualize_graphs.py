@@ -484,7 +484,7 @@ def save_projection(
         "y": y_col,
         "hue": group_col,
         "data": plot_data,
-        "palette": "tab10",
+        "palette": "tab20",
         "s": 28,
     }
     if fitness_col is not None:
