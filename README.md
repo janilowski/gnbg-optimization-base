@@ -149,8 +149,8 @@ uv run --group bertopic python3 analysis/topic_candidates.py
 ```
 
 The script extracts the structured analysis notes from candidate files and uses
-BERTopic for topic labels and per-candidate assignments. By default BERTopic may
-use its configured embedding backend; pass `--embedding-model` to use a specific
+BERTopic for topic labels and per-candidate assignments. By default it uses
+`Snowflake/snowflake-arctic-embed-s`; pass `--embedding-model` to use a different
 local or cached model.
 
 For embedding models that require custom Hugging Face model code, such as

@@ -6,6 +6,9 @@ import csv
 from pathlib import Path
 
 
+DEFAULT_EMBEDDING_MODEL = "Snowflake/snowflake-arctic-embed-s"
+
+
 def analysis_note(source: str) -> str | None:
     start = source.find("ALGORITHM_ANALYSIS_NOTE_BEGIN")
     end = source.find("ALGORITHM_ANALYSIS_NOTE_END")
@@ -67,7 +70,11 @@ def main() -> None:
     parser.add_argument("--source-root")
     parser.add_argument("--source-glob", default="**/*.py")
     parser.add_argument("--out-dir", default="results/bertopic_minimal")
-    parser.add_argument("--embedding-model")
+    parser.add_argument(
+        "--embedding-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=f"SentenceTransformer model to use. Default: {DEFAULT_EMBEDDING_MODEL}.",
+    )
     parser.add_argument(
         "--document-source",
         choices=("note", "full"),
