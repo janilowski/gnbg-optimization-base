@@ -4,18 +4,28 @@ import argparse
 from pathlib import Path
 
 try:
-    from .gemini import DEFAULT_MODEL, ENV_KEYS, generate_with_gemini
+    from .openrouter import (
+        DEFAULT_MODEL,
+        ENV_KEYS,
+        generate_with_openrouter,
+    )
     from .throwaway_generation_core import (
         api_key_from_env as _api_key_from_env,
         build_prompt,
+        file_prefix_for_model,
         load_dotenv,
         run_generation_loop,
     )
 except ImportError:  # pragma: no cover - supports direct script execution
-    from gemini import DEFAULT_MODEL, ENV_KEYS, generate_with_gemini
+    from openrouter import (
+        DEFAULT_MODEL,
+        ENV_KEYS,
+        generate_with_openrouter,
+    )
     from throwaway_generation_core import (
         api_key_from_env as _api_key_from_env,
         build_prompt,
+        file_prefix_for_model,
         load_dotenv,
         run_generation_loop,
     )
@@ -31,14 +41,14 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Generate Gemini candidate algorithms, validate them on the quick "
+            "Generate OpenRouter candidate algorithms, validate them on the quick "
             "profile, and save passing candidates for BERTopic analysis."
         )
     )
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--max-attempts", type=int, default=None)
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--out-dir", default="candidates/throwaways")
+    parser.add_argument("--out-dir", default=None)
     parser.add_argument("--profile", default="quick")
     parser.add_argument("--seed-base", type=int, default=12345)
     parser.add_argument("--workers", type=int, default=None)
@@ -70,10 +80,11 @@ def main() -> None:
         return
 
     api_key_name, api_key = api_key_from_env()
-    out_dir = (repo_root / args.out_dir).resolve()
+    file_prefix = file_prefix_for_model(args.model)
+    out_dir = (repo_root / "candidates/throwaways" / file_prefix).resolve()
 
     def generate_text(prompt: str) -> str:
-        return generate_with_gemini(
+        return generate_with_openrouter(
             api_key=api_key,
             model=args.model,
             prompt=prompt,
@@ -84,12 +95,12 @@ def main() -> None:
 
     run_generation_loop(
         repo_root=repo_root,
-        provider_name="Gemini",
+        provider_name="OpenRouter",
         api_key_name=api_key_name,
         api_key=api_key,
         args=args,
         out_dir=out_dir,
-        output_prefix=args.model,
+        output_prefix=file_prefix,
         generate_text=generate_text,
     )
 

@@ -88,6 +88,56 @@ Useful knobs:
 - `--seed-base S` to change the deterministic seed schedule.
 - `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
 
+## Generating large amounts of working candidates
+
+Candidate generators ask an LLM for complete `Algorithm` modules,
+run the generated file through `run_candidate.py`, and keep only candidates that
+pass validation.
+
+For direct Gemini API usage, set a Google AI Studio key in `.env`:
+
+```text
+GEMINI_API_KEY=...
+```
+
+Then run:
+
+```bash
+uv run python3 analysis/generate_throwaway_candidates.py \
+  --count 100 \
+  --model gemini-flash-latest \
+  --profile quick
+```
+
+This path talks to Gemini directly and is the intended option for free-quota
+generations or to avoid paying the OpenRouter routing fee. Accepted candidates are
+written to `candidates/throwaways` by default.
+
+For OpenRouter, set:
+
+```text
+OPENROUTER_API_KEY=...
+```
+
+Then run:
+
+```bash
+uv run python3 analysis/generate_throwaway_candidates_openrouter.py \
+  --count 100 \
+  --model openai/gpt-5.4-nano \
+  --profile quick
+```
+
+Accepted candidates are written under `candidates/throwaways/<model-name>`, with the model
+name sanitized for filenames.
+
+Common options:
+
+- `--max-attempts N` to cap failed generations.
+- `--keep-rejected` to save rejected files for inspection.
+- `--hint` to rotate simple search-strategy hints in the prompt.
+- `--dry-run-prompt` to print the prompt without calling the API.
+
 ## Classifying generated algorithms
 
 LLM-generated candidate files under `candidates/` can be clustered with BERTopic
