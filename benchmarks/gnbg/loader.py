@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
-from misc import OverBudgetException
+from gnbg_harness import OverBudgetException
 
 from .official.GNBG_instances import GNBG
 

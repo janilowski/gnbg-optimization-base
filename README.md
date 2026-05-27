@@ -88,6 +88,102 @@ Useful knobs:
 - `--seed-base S` to change the deterministic seed schedule.
 - `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
 
+## Generating large amounts of working candidates
+
+Candidate generators ask an LLM for complete `Algorithm` modules,
+run the generated file through `run_candidate.py`, and keep only candidates that
+pass validation.
+
+For direct Gemini API usage, set a Google AI Studio key in `.env`:
+
+```text
+GEMINI_API_KEY=...
+```
+
+Then run:
+
+```bash
+uv run python3 analysis/generate_throwaway_candidates.py \
+  --count 100 \
+  --model gemini-flash-latest \
+  --profile quick
+```
+
+This path talks to Gemini directly and is the intended option for free-quota
+generations or to avoid paying the OpenRouter routing fee. Accepted candidates are
+written to `candidates/throwaways` by default.
+
+For OpenRouter, set:
+
+```text
+OPENROUTER_API_KEY=...
+```
+
+Then run:
+
+```bash
+uv run python3 analysis/generate_throwaway_candidates_openrouter.py \
+  --count 100 \
+  --model openai/gpt-5.4-nano \
+  --profile quick
+```
+
+Accepted candidates are written under `candidates/throwaways/<model-name>`, with the model
+name sanitized for filenames.
+
+Common options:
+
+- `--max-attempts N` to cap failed generations.
+- `--keep-rejected` to save rejected files for inspection.
+- `--hint` to rotate simple search-strategy hints in the prompt.
+- `--dry-run-prompt` to print the prompt without calling the API.
+
+## Classifying generated algorithms
+
+LLM-generated candidate files under `candidates/` can be clustered with BERTopic
+without adding those dependencies to the default benchmark environment:
+
+```bash
+uv sync --group bertopic
+uv run --group bertopic python3 analysis/topic_candidates.py
+```
+
+The script extracts the structured analysis notes from candidate files and uses
+BERTopic for topic labels and per-candidate assignments. By default it uses
+`Snowflake/snowflake-arctic-embed-s`; pass `--embedding-model` to use a different
+local or cached model.
+
+For embedding models that require custom Hugging Face model code, such as
+`nomic-ai/CodeRankEmbed`, pass `--trust-remote-code` explicitly:
+
+```bash
+uv run --group bertopic python3 analysis/topic_candidates.py \
+  --skip-local-candidates \
+  --source-root candidates/throwaways \
+  --source-glob '**/*.py' \
+  --embedding-model nomic-ai/CodeRankEmbed \
+  --trust-remote-code \
+  --out-dir results/bertopic_coderank_throwaways
+```
+
+Outputs are written to:
+
+```text
+results/bertopic_minimal/candidate_topics.csv
+results/bertopic_minimal/topic_keywords.csv
+```
+
+External experiment folders can be analyzed without copying them into
+`candidates/` first:
+
+```bash
+uv run --group bertopic python3 analysis/topic_candidates.py \
+  --skip-local-candidates \
+  --source-root ~/Documents/code/LLaMEA \
+  --source-glob 'exp-*/code/*.py' \
+  --out-dir results/bertopic_llamea
+```
+
 ## Generating an LLM-designed EA submission pack
 
 Run the full 31-run evaluation and export the required `.dat` files in one command.

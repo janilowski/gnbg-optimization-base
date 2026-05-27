@@ -14,5 +14,26 @@ dependencies = [
   "iohgnbg>=0.0.2",
 ]
 
+[dependency-groups]
+bertopic = [
+  "bertopic>=0.17.0",
+  "einops>=0.8.0",
+]
+
 [tool.setuptools]
 py-modules = ["gnbg_harness", "candidate", "run_candidate"]
+
+[tool.basedpyright]
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = false
+include = [
+  "candidate.py",
+  "gnbg_harness.py",
+  "run_candidate.py",
+  "analysis",
+]
+exclude = [
+  "candidates",
+  "results",
+  ".venv",
+]

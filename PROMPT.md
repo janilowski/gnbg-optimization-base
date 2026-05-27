@@ -6,9 +6,36 @@ Constraints:
 - Do not edit the harness unless a harness bug blocks evaluation.
 - Stay within the evaluation budget.
 - The objective is minimization.
-- Prefer a robust population-based or multi-start local-search style method over pure random search.
-- Favor creativity: combine at least two ideas (e.g., restart policy + local search, or adaptive mutation + elite archive), but keep the code readable.
-- Explain your idea in detail in a comment block at the top of the candidate file. First work on the idea, then try implementing it.
+- Prefer robust search behavior over pure random search. Do not assume a specific
+  optimizer family is required; population-based, single-trajectory, local,
+  surrogate-like, restart-based, coordinate-wise, hybrid, or unusual approaches
+  are all acceptable if they are budget-safe and well motivated.
+- Favor creativity without forcing the design into familiar buckets. If the
+  method is closest to a known family, say so, but do not label it as such unless
+  that is genuinely how it works.
+- Include the structured analysis note below near the top of `candidate.py`,
+  before the implementation. Keep the exact begin/end markers. Fill it in with
+  plain language based on what the code actually does, using open-ended terms
+  rather than picking from a fixed taxonomy.
+
+```text
+ALGORITHM_ANALYSIS_NOTE_BEGIN
+Summary: One or two sentences describing the search strategy.
+Search state: What information the algorithm keeps between evaluations.
+Candidate generation: How new points are proposed.
+Selection and replacement: How accepted/improving points affect future search.
+Adaptation: What changes over time, if anything.
+Exploration mechanisms: How the method avoids getting stuck.
+Exploitation mechanisms: How the method intensifies around promising regions.
+Boundary handling: How out-of-bounds points are repaired or avoided.
+Budget strategy: How the evaluation budget is allocated over phases.
+Closest known influences: Known optimizer ideas it resembles, or "none/unclear".
+Novelty or unusual aspects: What is distinctive about this implementation.
+Failure modes: Landscape types or conditions where it may perform poorly.
+ALGORITHM_ANALYSIS_NOTE_END
+```
+
+- First work on the idea and the analysis note, then implement it.
 - Include a lot of comments in your code that explain what you are doing.
 - You may search the internet for papers on black box function optimization.
 
