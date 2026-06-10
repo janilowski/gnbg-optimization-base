@@ -88,6 +88,39 @@ Useful knobs:
 - `--seed-base S` to change the deterministic seed schedule.
 - `--with-anchors/--no-anchors` to enable or disable baseline-anchor comparisons.
 
+## Classifying generated algorithms
+
+LLM-generated candidate files under `candidates/` can be clustered with BERTopic
+without adding those dependencies to the default benchmark environment:
+
+```bash
+uv sync --group bertopic
+uv run --group bertopic python3 analysis/topic_candidates.py
+```
+
+The script extracts the structured analysis notes from candidate files and uses
+BERTopic for topic labels and per-candidate assignments. By default BERTopic may
+use its configured embedding backend; pass `--embedding-model` to use a specific
+local or cached model.
+
+Outputs are written to:
+
+```text
+results/bertopic_minimal/candidate_topics.csv
+results/bertopic_minimal/topic_keywords.csv
+```
+
+External experiment folders can be analyzed without copying them into
+`candidates/` first:
+
+```bash
+uv run --group bertopic python3 analysis/topic_candidates.py \
+  --skip-local-candidates \
+  --source-root ~/Documents/code/LLaMEA \
+  --source-glob 'exp-*/code/*.py' \
+  --out-dir results/bertopic_llamea
+```
+
 ## Generating an LLM-designed EA submission pack
 
 Run the full 31-run evaluation and export the required `.dat` files in one command.

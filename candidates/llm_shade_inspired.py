@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+# ALGORITHM_ANALYSIS_NOTE_BEGIN
+# Summary: The method is a SHADE-style differential-evolution optimizer wrapped in a benchmark-compatible Algorithm interface.
+# Search state: It tracks a population, fitness values, best solution, adaptive mutation and crossover memories, archive information, and termination counters.
+# Candidate generation: New candidates are built from differential mutation, p-best guidance, crossover, and parameter samples drawn from success-history memories.
+# Selection and replacement: A trial replaces its target individual when it improves the objective, and successful parameter settings update the memories.
+# Adaptation: Mutation factor and crossover rate are adapted from the settings that produced successful replacements.
+# Exploration mechanisms: Exploration comes from population diversity, random donors, differential vectors, and archive-assisted mutation.
+# Exploitation mechanisms: Exploitation comes from p-best attraction, elitist selection, and repeated refinement of successful parameter ranges.
+# Boundary handling: Boundary handling is managed by the optimizer internals before objective evaluation.
+# Budget strategy: The optimizer stops through its maximum-function-evaluation termination rule and returns the best solution found.
+# Closest known influences: JADE, SHADE, success-history adaptive differential evolution.
+# Novelty or unusual aspects: The file includes a reusable optimizer framework around the DE variant rather than only the benchmark Algorithm class.
+# Failure modes: Population DE can be slow to polish smooth basins and relies on useful population diversity throughout the run.
+# ALGORITHM_ANALYSIS_NOTE_END
+
 import time
 from enum import IntEnum
 

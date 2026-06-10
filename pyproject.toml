@@ -14,5 +14,10 @@ dependencies = [
   "iohgnbg>=0.0.2",
 ]
 
+[dependency-groups]
+bertopic = [
+  "bertopic>=0.17.0",
+]
+
 [tool.setuptools]
 py-modules = ["gnbg_harness", "candidate", "run_candidate"]

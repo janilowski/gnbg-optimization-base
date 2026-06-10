@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+# ALGORITHM_ANALYSIS_NOTE_BEGIN
+# Summary: The method is a restarted covariance-adaptation evolution strategy with long-term elite memory.
+# Search state: It tracks a Gaussian mean, covariance matrix, global step size, evolution paths, incumbent, and elite archive.
+# Candidate generation: Most candidates are sampled from a CMA-ES distribution, with some proposals blended through archived elite anchors.
+# Selection and replacement: Each generation ranks offspring by objective value and updates the search distribution from the best parents.
+# Adaptation: Mean, covariance, and step size adapt from successful ranked samples; restart size and restart scale vary across runs.
+# Exploration mechanisms: Exploration comes from broad covariance sampling, BIPOP-style large and small restarts, and archive-guided jumps.
+# Exploitation mechanisms: Exploitation comes from covariance learning around promising basins and reuse of historical elite solutions.
+# Boundary handling: Proposed points are clipped into the box before evaluation.
+# Budget strategy: The budget is divided across repeated CMA-style runs, with every evaluation guarded by a counter.
+# Closest known influences: CMA-ES, BIPOP restarts, elite archive memory, residual or skip-style proposal blending.
+# Novelty or unusual aspects: Historical elites persist across restarts and can directly pull new samples toward previously good regions.
+# Failure modes: Full covariance updates can be expensive, and archive anchors may over-focus the search if early elites are misleading.
+# ALGORITHM_ANALYSIS_NOTE_END
+
 # =============================================================================
 #  BIPOP-CMA-ES  with  Skip-Residual Archive Bridges
 # =============================================================================

@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+# ALGORITHM_ANALYSIS_NOTE_BEGIN
+# Summary: The method is a hybrid differential-evolution optimizer with elite archive memory, local mutation bursts, and restarts.
+# Search state: It keeps a small population, objective values, global incumbent, adaptive local radius, stall counter, and elite archive.
+# Candidate generation: Candidates are produced by current-to-elite differential mutation, crossover, local Gaussian perturbations, and restart samples.
+# Selection and replacement: Trial points replace their parent or archive entries only when they improve objective value.
+# Adaptation: Mutation strength, crossover rate, local radius, and restart behavior change with progress and observed improvement.
+# Exploration mechanisms: Exploration comes from opposition initialization, DE differences, partial population reseeding, and broad random restart points.
+# Exploitation mechanisms: Exploitation comes from current-to-best guidance, elite archive reuse, and short local search around strong points.
+# Boundary handling: All proposals are projected into the domain before evaluation.
+# Budget strategy: Evaluation calls are guarded and shared between initialization, population evolution, local bursts, and restarts.
+# Closest known influences: Differential evolution, current-to-pbest guidance, elite archives, adaptive local search, soft restarts.
+# Novelty or unusual aspects: Shortcut proposals blend current points with elite directions to recover progress when regular mutation stalls.
+# Failure modes: It can spend too much effort around early elites and may be less rotation-aware than a full covariance method.
+# ALGORITHM_ANALYSIS_NOTE_END
+
 import numpy as np
 
 
